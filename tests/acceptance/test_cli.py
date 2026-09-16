@@ -91,8 +91,9 @@ def test_nullable_scores_preserve_missing_vs_null(tmp_path: Path) -> None:
     cases = [
         json.loads(line) for line in (tmp_path / "null" / "cases.jsonl").read_text().splitlines()
     ]
-    assert "expected" not in cases[0]
-    assert cases[1]["expected"] is None
+    cases_by_id = {case["case_id"]: case for case in cases}
+    assert "expected" not in cases_by_id["missing"]
+    assert cases_by_id["null"]["expected"] is None
 
 
 def test_async_trials_model_preset(tmp_path: Path) -> None:

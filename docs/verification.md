@@ -14,6 +14,22 @@ JUnit results, and Python line/branch coverage under the ignored
 package are needed for report interaction tests; neither is shipped in the Python
 wheel or required to open a report.
 
+## Continuous integration
+
+GitHub Actions runs three independent gates for pull requests, pushes to `main`,
+and manual dispatches:
+
+1. **Full verification** runs the canonical verifier on Python 3.12 with every
+   optional dependency and the locked report-test dependencies.
+2. **Compatibility** runs the Python test suite on Python 3.12 across Linux,
+   macOS, and Windows, and on supported newer Python versions on Linux.
+3. **Packaging** builds the wheel and source distribution, then runs the clean,
+   dependency-free installed-wheel acceptance test.
+
+The full and packaging jobs upload their generated evidence for 14 days, including
+on failure. CI never opts in to live provider tests, discovers cloud fixtures, or
+performs remote writes. Authenticated provider checks remain explicit manual gates.
+
 Test scopes:
 
 | Scope | What it proves |

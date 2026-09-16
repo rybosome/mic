@@ -1,5 +1,7 @@
 # mic for Python
 
+[![CI](https://github.com/rybosome/mic/actions/workflows/ci.yml/badge.svg)](https://github.com/rybosome/mic/actions/workflows/ci.yml)
+
 Define typed micro-evaluations with decorators, read cases from Python data, local
 files, BigQuery or Braintrust, and review every result locally. Dataset storage
 and experiment reporting are independent. The core has **zero third-party runtime dependencies**. Standard-library dataclasses
