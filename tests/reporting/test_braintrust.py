@@ -328,7 +328,7 @@ async def test_running_evaluation_persists_repeated_export_cancellation_after_th
         release.set()
     with pytest.raises(asyncio.CancelledError):
         await pending
-    manifest = json.loads((tmp_path / "run/run.json").read_text())
+    manifest = json.loads((tmp_path / "run/run.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "cancelled" and manifest["exit_code"] == 130
     assert manifest["reporting"]["braintrust"]["status"] == "cancelled"
     assert manifest["counts"]["completed"] == 1

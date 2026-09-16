@@ -19,11 +19,13 @@ def three_rows() -> list[mic.RawCase]:
 
 
 def read_manifest(path: Path):
-    return json.loads((path / "run.json").read_text())
+    return json.loads((path / "run.json").read_text(encoding="utf-8"))
 
 
 def read_cases(path: Path):
-    return [json.loads(line) for line in (path / "cases.jsonl").read_text().splitlines()]
+    return [
+        json.loads(line) for line in (path / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
 
 
 async def test_reporter_cancellation_saves_truthful_upload_outcome(tmp_path: Path) -> None:

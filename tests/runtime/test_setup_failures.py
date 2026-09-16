@@ -75,7 +75,7 @@ def test_dataset_snapshot_write_failure_saves_failed_manifest_without_tasks(tmp_
     saved = manifest(tmp_path)
     assert saved["status"] == "failed"
     assert saved["failures"][0]["phase"] == "artifact"
-    assert saved["failures"][0]["type"] == "IsADirectoryError"
+    assert saved["failures"][0]["type"] in {"IsADirectoryError", "PermissionError"}
     assert (tmp_path / "report.html").is_file()
 
 
@@ -104,4 +104,6 @@ def test_journal_write_failure_stops_admission_and_retains_local_failure(tmp_pat
 def test_run_artifacts_include_the_declared_output_schema(tmp_path):
     result = mic.run(evaluation([row()], output=int), output=tmp_path)
     assert result.exit_code == 0
-    assert json.loads((tmp_path / "run.json").read_text())["output_schema"] == {"type": "integer"}
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))["output_schema"] == {
+        "type": "integer"
+    }

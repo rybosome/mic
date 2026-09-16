@@ -30,7 +30,7 @@ def test_reporter_failure_keeps_results_and_does_not_repeat_tasks(tmp_path):
     assert result.exit_code == 1
     assert result.cases[0]["status"] == "completed"
     assert manifest(tmp_path)["reporting"]["broken"]["status"] == "failed"
-    assert "simulated upload failure" in (tmp_path / "report.html").read_text()
+    assert "simulated upload failure" in (tmp_path / "report.html").read_text(encoding="utf-8")
 
 
 def test_existing_evidence_is_never_overwritten(tmp_path):

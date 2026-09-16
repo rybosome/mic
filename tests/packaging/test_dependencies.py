@@ -28,7 +28,8 @@ def test_native_core_runs_dataclasses_and_offline_report_without_site_packages(t
     metadata = tmp_path / f"mic_evals-{project['version']}.dist-info"
     metadata.mkdir()
     (metadata / "METADATA").write_text(
-        f"Metadata-Version: 2.1\nName: mic-evals\nVersion: {project['version']}\n"
+        f"Metadata-Version: 2.1\nName: mic-evals\nVersion: {project['version']}\n",
+        encoding="utf-8",
     )
     script = """
 import sys
@@ -60,13 +61,17 @@ assert (result.output_dir / "report.html").is_file()
 assert not ({"pydantic", "google", "braintrust", "httpx", "requests"} & set(sys.modules))
 print("zero-dependency native core passed")
 """
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHONPATH": os.pathsep.join((str(PROJECT / "src"), str(tmp_path))),
+            "PYTHONNOUSERSITE": "1",
+        }
+    )
     result = subprocess.run(
         [sys.executable, "-S", "-c", script],
         cwd=tmp_path,
-        env={
-            "PYTHONPATH": os.pathsep.join((str(PROJECT / "src"), str(tmp_path))),
-            "PATH": os.environ.get("PATH", ""),
-        },
+        env=environment,
         capture_output=True,
         text=True,
         timeout=30,

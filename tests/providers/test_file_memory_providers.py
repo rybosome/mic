@@ -18,7 +18,7 @@ async def file_rows(path: Path, limits: ReadLimits = ReadLimits()):
 @pytest.mark.asyncio
 async def test_jsonl_preserves_raw_missing_null_and_physical_lines(tmp_path):
     path = tmp_path / "cases.jsonl"
-    path.write_text('\n{"input": "x", "expected": null}\n\n{"input": 3}\n')
+    path.write_text('\n{"input": "x", "expected": null}\n\n{"input": 3}\n', encoding="utf-8")
     rows, provenance = await file_rows(path)
     assert rows[0]["expected"] is None
     assert "expected" not in rows[1]
@@ -32,7 +32,7 @@ async def test_jsonl_preserves_raw_missing_null_and_physical_lines(tmp_path):
 @pytest.mark.asyncio
 async def test_json_array_and_custom_columns(tmp_path):
     path = tmp_path / "cases.json"
-    path.write_text('[{"question": {"a": [1, 2]}, "answer": "yes"}]')
+    path.write_text('[{"question": {"a": [1, 2]}, "answer": "yes"}]', encoding="utf-8")
     rows, _ = await file_rows(path)
     assert rows[0]["question"] == {"a": [1, 2]}
     assert rows[0]["answer"] == "yes"
@@ -53,7 +53,7 @@ async def test_json_array_and_custom_columns(tmp_path):
 )
 async def test_jsonl_invalid(tmp_path, content, match):
     path = tmp_path / "bad.jsonl"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     with pytest.raises(DatasetError, match=match):
         await file_rows(path)
 
@@ -63,7 +63,8 @@ async def test_jsonl_invalid(tmp_path, content, match):
 async def test_file_row_caps_fail_instead_of_truncate(tmp_path, suffix):
     path = tmp_path / f"rows.{suffix}"
     path.write_text(
-        '[{"input":1},{"input":2}]' if suffix == "json" else '{"input":1}\n{"input":2}\n'
+        '[{"input":1},{"input":2}]' if suffix == "json" else '{"input":1}\n{"input":2}\n',
+        encoding="utf-8",
     )
     with pytest.raises(DatasetError, match="max_rows=1"):
         await file_rows(path, ReadLimits(max_rows=1))
@@ -72,13 +73,13 @@ async def test_file_row_caps_fail_instead_of_truncate(tmp_path, suffix):
 @pytest.mark.asyncio
 async def test_file_record_and_raw_byte_caps(tmp_path):
     path = tmp_path / "rows.jsonl"
-    path.write_text('{"input":"' + "x" * 100 + '"}\n')
+    path.write_text('{"input":"' + "x" * 100 + '"}\n', encoding="utf-8")
     with pytest.raises(DatasetError, match="max_record_bytes=20"):
         await file_rows(path, ReadLimits(max_record_bytes=20))
     with pytest.raises(DatasetError, match="max_bytes=30"):
         await file_rows(path, ReadLimits(max_bytes=30))
     path = tmp_path / "rows.json"
-    path.write_text('[{"input":"' + "x" * 100 + '"}]')
+    path.write_text('[{"input":"' + "x" * 100 + '"}]', encoding="utf-8")
     with pytest.raises(DatasetError, match="max_bytes=30"):
         await file_rows(path, ReadLimits(max_bytes=30))
 
@@ -86,7 +87,7 @@ async def test_file_record_and_raw_byte_caps(tmp_path):
 @pytest.mark.asyncio
 async def test_file_closes_when_consumer_stops_or_raises(tmp_path):
     path = tmp_path / "cases.jsonl"
-    path.write_text('{"input":1}\n{"input":2}')
+    path.write_text('{"input":1}\n{"input":2}', encoding="utf-8")
     with pytest.raises(RuntimeError):
         async with FileLoader().open(FileHandle(path), limits=ReadLimits()) as read:
             async for _ in read.rows():
@@ -155,7 +156,7 @@ async def test_memory_closes_generators_on_prefix_and_validation_failure():
 @pytest.mark.asyncio
 async def test_jsonl_prefix_provenance_does_not_claim_full_file_digest(tmp_path):
     path = tmp_path / "cases.jsonl"
-    path.write_text('{"input":1}\n{"input":2}\n')
+    path.write_text('{"input":1}\n{"input":2}\n', encoding="utf-8")
     async with FileLoader().open(FileHandle(path), limits=ReadLimits()) as read:
         async for _ in read.rows():
             break

@@ -73,9 +73,10 @@ def verify_archives(wheel, sdist):
         assert any(name.endswith(".dist-info/licenses/LICENSE") for name in names), (
             "MIT license text missing from wheel"
         )
-        assert metadata.get_payload().strip() == (ROOT / "README.md").read_text().strip(), (
-            "Wheel README differs from source"
-        )
+        assert (
+            metadata.get_payload().strip()
+            == (ROOT / "README.md").read_text(encoding="utf-8").strip()
+        ), "Wheel README differs from source"
         requirements = metadata.get_all("Requires-Dist", [])
         mandatory = [requirement for requirement in requirements if "; extra ==" not in requirement]
         assert not mandatory, f"Core wheel still declares required dependencies: {mandatory}"
@@ -145,7 +146,7 @@ def main():
         "--output", type=Path, default=ROOT / ".artifacts/packaging/verification.json"
     )
     args = parser.parse_args()
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     stem = f"{project['name'].replace('-', '_')}-{project['version']}"
     wheel = (args.wheel or ROOT / "dist" / f"{stem}-py3-none-any.whl").resolve()
     sdist = (args.sdist or ROOT / "dist" / f"{stem}.tar.gz").resolve()
@@ -308,7 +309,7 @@ def main():
             assert manifest["scores"]["label"]["count"] == 6
             assert (output / "report.html").is_file()
             run(f"rerender_{suffix}", [mic, "report", output, "--output", output / "review.html"])
-            assert "structured.classify" in (output / "review.html").read_text()
+            assert "structured.classify" in (output / "review.html").read_text(encoding="utf-8")
             manifests.append(manifest)
         assert snapshots[0]["dataset"]["digest"] == snapshots[1]["dataset"]["digest"]
         assert manifests[0]["dataset"]["digest"] == manifests[1]["dataset"]["digest"]

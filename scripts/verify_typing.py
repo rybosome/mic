@@ -13,7 +13,7 @@ FIXTURES = ROOT / "tests/typing"
 EXPECTED = {
     (str(path), index)
     for path in FIXTURES.glob("*.py")
-    for index, line in enumerate(path.read_text().splitlines(), 1)
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
     if "# expect-error" in line
 }
 

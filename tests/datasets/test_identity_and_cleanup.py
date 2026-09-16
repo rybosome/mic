@@ -105,10 +105,10 @@ async def test_repeated_cancel_drains_source_factory_and_its_close(tmp_path: Pat
     assert events == ["returned", "closed"]
     assert task_calls == []
     if entrypoint == "run":
-        manifest = json.loads((tmp_path / "run.json").read_text())
+        manifest = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
         assert manifest["status"] == "cancelled"
         assert manifest["exit_code"] == 130
         assert manifest["counts"]["planned"] == 0
         assert manifest["failures"][0]["phase"] == "cancelled"
-        assert (tmp_path / "cases.jsonl").read_text() == ""
+        assert (tmp_path / "cases.jsonl").read_text(encoding="utf-8") == ""
         assert (tmp_path / "report.html").is_file()

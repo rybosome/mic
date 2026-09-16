@@ -44,7 +44,7 @@ def test_baseline_fixed_gate_and_rerender(tmp_path: Path) -> None:
     assert "exact 0.667" in baseline.stdout
     fixed = invoke("run", "examples.triage:fixed", "--output", str(tmp_path / "fixed"), "--json")
     assert fixed.returncode == 0, fixed.stderr
-    before = json.loads((tmp_path / "baseline" / "run.json").read_text())
+    before = json.loads((tmp_path / "baseline" / "run.json").read_text(encoding="utf-8"))
     after = json.loads(fixed.stdout)
     assert before["scores"]["exact"]["mean"] == pytest.approx(2 / 3)
     assert after["scores"]["exact"]["mean"] == 1.0
@@ -73,7 +73,7 @@ def test_baseline_fixed_gate_and_rerender(tmp_path: Path) -> None:
 def test_failure_artifacts_name_errors(selector: str, tmp_path: Path) -> None:
     process = invoke("run", f"examples.failures:{selector}", "--output", str(tmp_path / selector))
     assert process.returncode == 1, process.stderr
-    manifest = json.loads((tmp_path / selector / "run.json").read_text())
+    manifest = json.loads((tmp_path / selector / "run.json").read_text(encoding="utf-8"))
     assert manifest["counts"]["failed"] > 0
     assert manifest["failures"]
     assert all(failure["phase"] and failure["message"] for failure in manifest["failures"])
@@ -89,7 +89,8 @@ def test_nullable_scores_preserve_missing_vs_null(tmp_path: Path) -> None:
     stats = manifest["scores"]["nullable_exact"]
     assert stats["count"] == 1 and stats["null_count"] == 2 and stats["mean"] == 1.0
     cases = [
-        json.loads(line) for line in (tmp_path / "null" / "cases.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (tmp_path / "null" / "cases.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     cases_by_id = {case["case_id"]: case for case in cases}
     assert "expected" not in cases_by_id["missing"]
@@ -114,7 +115,8 @@ def test_async_trials_model_preset(tmp_path: Path) -> None:
     manifest = json.loads(process.stdout)
     assert manifest["counts"]["completed"] == 6
     cases = [
-        json.loads(line) for line in (tmp_path / "async" / "cases.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (tmp_path / "async" / "cases.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert all(case["task_metadata"]["model_preset"] == "offline-test" for case in cases)
     assert [(case["row_index"], case["trial"]) for case in cases] == sorted(

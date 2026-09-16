@@ -34,12 +34,14 @@ def test_html_round_trip_is_offline_and_escaped() -> None:
 
 def test_saved_artifacts_render_without_eval_definition(tmp_path: Path) -> None:
     manifest, cases = sample()
-    (tmp_path / "run.json").write_text(json.dumps(manifest))
-    (tmp_path / "cases.jsonl").write_text("\n".join(json.dumps(case) for case in cases))
+    (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "cases.jsonl").write_text(
+        "\n".join(json.dumps(case) for case in cases), encoding="utf-8"
+    )
     assert write_report(tmp_path) == tmp_path / "report.html"
-    assert "Case details" in (tmp_path / "report.html").read_text()
+    assert "Case details" in (tmp_path / "report.html").read_text(encoding="utf-8")
     manifest["schema_version"] = "unknown"
-    (tmp_path / "run.json").write_text(json.dumps(manifest))
+    (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Unsupported"):
         write_report(tmp_path)
 
@@ -56,14 +58,16 @@ def test_console_separates_quality_and_execution() -> None:
 def test_html_reader_rejects_invalid_case_json_without_pydantic(
     content: str, tmp_path: Path
 ) -> None:
-    (tmp_path / "run.json").write_text(json.dumps({"schema_version": "mic-run-v1"}))
-    (tmp_path / "cases.jsonl").write_text(content)
+    (tmp_path / "run.json").write_text(
+        json.dumps({"schema_version": "mic-run-v1"}), encoding="utf-8"
+    )
+    (tmp_path / "cases.jsonl").write_text(content, encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Invalid case artifact"):
         write_report(tmp_path)
 
 
 def test_html_reader_rejects_non_object_manifest(tmp_path: Path) -> None:
-    (tmp_path / "run.json").write_text("[]")
+    (tmp_path / "run.json").write_text("[]", encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Cannot render report"):
         write_report(tmp_path)
 
@@ -74,9 +78,11 @@ def test_report_output_cannot_overwrite_source_artifacts(
     name: str, alias: str, tmp_path: Path
 ) -> None:
     manifest, cases = sample()
-    (tmp_path / "run.json").write_text(json.dumps(manifest))
-    (tmp_path / "cases.jsonl").write_text("\n".join(json.dumps(case) for case in cases))
-    (tmp_path / "dataset.jsonl").write_text('{"input":"original"}\n')
+    (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "cases.jsonl").write_text(
+        "\n".join(json.dumps(case) for case in cases), encoding="utf-8"
+    )
+    (tmp_path / "dataset.jsonl").write_text('{"input":"original"}\n', encoding="utf-8")
     artifact = tmp_path / name
     original = artifact.read_bytes()
     destination = artifact
@@ -97,21 +103,23 @@ def test_failed_atomic_replacement_preserves_existing_report_and_cleans_temp_fil
     import mic.reporters.html as renderer
 
     manifest, cases = sample()
-    (tmp_path / "run.json").write_text(json.dumps(manifest))
-    (tmp_path / "cases.jsonl").write_text("\n".join(json.dumps(case) for case in cases))
+    (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / "cases.jsonl").write_text(
+        "\n".join(json.dumps(case) for case in cases), encoding="utf-8"
+    )
     destination = tmp_path / "report.html"
-    destination.write_text("previous complete report")
+    destination.write_text("previous complete report", encoding="utf-8")
 
     def fail_replace(source: Path, target: Path) -> None:
         assert source.parent == destination.parent
-        assert source.read_text().startswith("<!doctype html>")
+        assert source.read_text(encoding="utf-8").startswith("<!doctype html>")
         assert target == destination
         raise OSError("replacement unavailable")
 
     monkeypatch.setattr(renderer.os, "replace", fail_replace)
     with pytest.raises(ConfigurationError, match="replacement unavailable"):
         write_report(tmp_path)
-    assert destination.read_text() == "previous complete report"
+    assert destination.read_text(encoding="utf-8") == "previous complete report"
     assert not list(tmp_path.glob(".mic-report-*"))
 
 

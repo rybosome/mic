@@ -252,13 +252,13 @@ async def test_async_timeout_closes_source_generator():
     async def slow():
         try:
             yield {"input": "x", "expected": "x"}
-            await asyncio.sleep(2)
+            await asyncio.sleep(60)
             yield {"input": "y", "expected": "y"}
         finally:
             closed.append(True)
 
     with pytest.raises(DatasetError, match="TimeoutError"):
-        await load_dataset(definition(slow()), limits=ReadLimits(timeout_seconds=0.01))
+        await load_dataset(definition(slow()), limits=ReadLimits(timeout_seconds=0.25))
     assert closed == [True]
 
 
