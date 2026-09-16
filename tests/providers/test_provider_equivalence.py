@@ -58,7 +58,7 @@ def source_fixture(kind, rows, tmp_path):
         return rows, resolver
     if kind == "file":
         path = tmp_path / "fixture.jsonl"
-        path.write_text("\n".join(json.dumps(row) for row in rows))
+        path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
         resolver.register(FileHandle, FileLoader())
         return FileHandle(path), resolver
     if kind == "bigquery":

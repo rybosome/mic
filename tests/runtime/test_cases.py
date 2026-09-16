@@ -194,6 +194,9 @@ def test_unlabeled_and_present_null_remain_distinct_on_disk(tmp_path):
     )
     assert result.exit_code == 0
     assert sorted(seen) == [False, True]
-    rows = [json.loads(line) for line in (tmp_path / "dataset.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "dataset.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
     assert "expected" not in rows[0]
     assert rows[1]["expected"] is None

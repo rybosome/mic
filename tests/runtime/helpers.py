@@ -30,4 +30,4 @@ def row(value=1, **extra):
 
 
 def manifest(path: Path):
-    return json.loads((path / "run.json").read_text())
+    return json.loads((path / "run.json").read_text(encoding="utf-8"))

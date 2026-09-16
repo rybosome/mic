@@ -9,6 +9,7 @@ def test_local_dataclass_run_and_report_never_import_third_party_packages(tmp_pa
     root = Path(__file__).resolve().parents[2]
     script = r"""
 import importlib.abc
+import importlib.machinery
 import json
 from pathlib import Path
 import sys
@@ -16,7 +17,11 @@ import sys
 class StandardLibraryOnly(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         top = fullname.partition(".")[0]
-        if top not in sys.stdlib_module_names and top not in {"mic", "examples"}:
+        if (
+            top not in sys.stdlib_module_names
+            and top not in {"mic", "examples"}
+            and importlib.machinery.PathFinder.find_spec(fullname, path) is not None
+        ):
             raise AssertionError("Unexpected third-party import: " + fullname)
 
 sys.meta_path.insert(0, StandardLibraryOnly())

@@ -32,9 +32,9 @@ def test_native_and_file_complex_cases_match_with_validated_output_and_metadata(
         assert row["output"]["owner"] is None
         assert row["metadata"] == {"segment": "demo", "model": None}
         assert row["task_metadata"] == {"model": "rules"}
-    manifest = json.loads((tmp_path / "file" / "run.json").read_text())
+    manifest = json.loads((tmp_path / "file" / "run.json").read_text(encoding="utf-8"))
     assert manifest["dataset"]["schema"]["input"]
-    assert "messages" in (tmp_path / "file" / "report.html").read_text()
+    assert "messages" in (tmp_path / "file" / "report.html").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
