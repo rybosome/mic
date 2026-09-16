@@ -1,0 +1,17 @@
+{
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "strict",
+  "include": [
+    "positive.py",
+    "negative.py",
+    "../../examples/structured.py",
+    "../../examples/pydantic_models.py",
+    "../../examples/async_eval.py",
+    "../../examples/failures.py",
+    "structured.py"
+  ],
+  "extraPaths": [
+    "../../src",
+    "../.."
+  ]
+}

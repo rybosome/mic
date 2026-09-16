@@ -1,0 +1,3 @@
+{"id":"case-001","input":"It crashes on startup","expected":"bug"}
+{"id":"case-002","input":"Please add dark mode","expected":"feature"}
+{"id":"case-003","input":"How do I sign in?","expected":"question"}

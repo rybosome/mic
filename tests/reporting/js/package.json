@@ -1,0 +1,8 @@
+{
+  "name": "mic-report-interaction-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test report.test.mjs" },
+  "devDependencies": { "jsdom": "26.1.0" },
+  "engines": { "node": ">=18" }
+}

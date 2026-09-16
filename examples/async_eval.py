@@ -1,0 +1,34 @@
+"""Async source, task, and scorer with typed nested inputs and task metadata."""
+
+import asyncio
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+
+import mic
+from mic import JsonObject, Score, ScoreContext, TaskContext, TaskResult
+
+
+@dataclass
+class Item:
+    text: str
+    delay: float
+
+
+@mic.dataset(name="async.items", schema=mic.case_schema(input=Item, expected=str))
+async def items() -> AsyncIterator[object]:
+    for index, delay in enumerate((0.03, 0.02, 0.01)):
+        yield mic.RawCase(
+            id=f"async-{index}", input=Item(f"item {index}", delay), expected=f"ITEM {index}"
+        )
+
+
+@mic.scorer(name="exact")
+async def exact(context: ScoreContext[Item, str, str, JsonObject]) -> Score:
+    await asyncio.sleep(0)
+    return Score("exact", float(context.output == context.require_expected()))
+
+
+@mic.eval(name="async.uppercase", dataset=items, output=str, scorers=[exact], concurrency=3)
+async def uppercase(context: TaskContext[str, JsonObject], item: Item) -> TaskResult[str]:
+    await asyncio.sleep(item.delay)
+    return TaskResult(item.text.upper(), metadata={"model_preset": context.model_preset})

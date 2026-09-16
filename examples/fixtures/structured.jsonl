@@ -1,0 +1,2 @@
+{"id":"crash","input":{"messages":[{"role":"user","text":"It crashes on startup"}],"history":{"support":[{"role":"assistant","text":"Which version?"}]}},"expected":{"label":"bug","evidence":{"messages":[0]},"owner":null},"metadata":{"segment":"demo","model":null}}
+{"id":"feature","input":{"messages":[{"role":"user","text":"Please add dark mode"}],"history":{}},"expected":{"label":"feature","evidence":{"messages":[0]},"owner":null},"metadata":{"segment":"demo","model":null}}

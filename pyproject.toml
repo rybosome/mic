@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mic-evals"
+version = "0.1.0"
+description = "Typed, provider-independent micro-evaluations for Python"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ryan Eiger" }]
+keywords = ["evaluation", "evals", "llm", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rybosome/mic"
+Repository = "https://github.com/rybosome/mic"
+Issues = "https://github.com/rybosome/mic/issues"
+
+[project.optional-dependencies]
+bigquery = ["google-cloud-bigquery>=3.30,<4"]
+braintrust = ["braintrust==0.39.0"]
+pydantic = ["pydantic>=2.11,<3"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "pyright>=1.1.400,<2", "ruff>=0.11,<1", "httpx>=0.27,<1", "pydantic>=2.11,<3", "typing_extensions>=4.13,<5", "coverage>=7.6,<8"]
+
+[project.scripts]
+mic = "mic.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mic"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/examples", "/docs", "/scripts", "/tests", "/pyproject.toml", "/uv.lock", "/README.md", "/LICENSE", "/.python-version"]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/node_modules/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = ["integration: requires explicitly configured live provider access"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+include = ["src/mic"]
+exclude = ["tests/typing/negative.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".cache", "evidence", "dist", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

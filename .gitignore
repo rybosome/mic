@@ -1,0 +1,12 @@
+.venv/
+.cache/
+.artifacts/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+.mic/
+dist/
+*.egg-info/
+node_modules/
+.coverage
