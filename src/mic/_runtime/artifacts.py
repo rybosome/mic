@@ -8,8 +8,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from .errors import ConfigurationError
-from .models import JsonObject, JsonValue
+from ..errors import ConfigurationError
+from ..models import JsonObject, JsonValue
 from .validation import dumps, json_object
 
 
@@ -37,7 +37,7 @@ def append_case(path: Path, case: JsonObject) -> None:
 
 
 def finish_artifacts(path: Path, manifest: JsonObject, cases: Sequence[JsonObject]) -> None:
-    from .reporters.html import render_report
+    from ..reporters.html import render_report
 
     atomic_json(path / "run.json", manifest)
     report = path / "report.html"

@@ -10,9 +10,9 @@ import json
 import math
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol, cast
 
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import JsonObject, JsonValue, ReadLimits
@@ -43,7 +43,6 @@ class BigQueryHandle:
     parameters: tuple[BigQueryParameter, ...] = ()
     page_size: int = 1000
     timeout: float = 60.0
-    provider: Literal["bigquery"] = field(default="bigquery", init=False)
 
 
 class QueryJob(Protocol):

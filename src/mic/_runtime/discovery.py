@@ -8,7 +8,7 @@ import mic
 from mic.errors import ConfigurationError
 
 type Definition = (
-    mic.Dataset[Any, Any, Any] | mic.EvalSpec[Any, Any, Any, Any] | mic.Scorer[Any, Any, Any, Any]
+    mic.Dataset[Any, Any, Any] | mic.Evaluation[Any, Any, Any, Any] | mic.Scorer[Any, Any, Any, Any]
 )
 
 
@@ -23,7 +23,7 @@ class DefinitionInfo:
 def _kind(value: object) -> str | None:
     if isinstance(value, mic.Dataset):
         return "dataset"
-    if isinstance(value, mic.EvalSpec):
+    if isinstance(value, mic.Evaluation):
         return "eval"
     if isinstance(value, mic.Scorer):
         return "scorer"

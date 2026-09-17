@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import cast
 
 from .._async import drain
-from ..artifacts import append_case
-from ..datasets import DatasetSnapshot
-from ..models import EvalSpec, JsonObject
+from ..models import Evaluation, JsonObject
+from .artifacts import append_case
 from .callbacks import CallbackPool
 from .case import run_case
+from .materialization import DatasetSnapshot
 from .options import Options
 
 
@@ -22,7 +22,7 @@ class BatchResult:
 
 
 async def execute[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     snapshot: DatasetSnapshot[I, E, M],
     options: Options,
     destination: Path,

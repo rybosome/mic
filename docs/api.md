@@ -1,9 +1,10 @@
 # Public API and execution contract
 
-`mic` exports `dataset`, `scorer`, `eval`, `case_schema`, `schema`, `Schema`, `run`, `arun`,
-`preflight`, `inspect_dataset`, `Resolver`, the value models, and typed errors.
-See their signatures in `src/mic` for all keyword arguments. The public package
-contains `py.typed` and the entire source passes strict Pyright.
+The top-level `mic` package contains ordinary authoring, execution, schema, result, and
+error APIs. Advanced provider contracts are imported from `mic.providers`; reporter
+contracts are imported from `mic.reporters`. Runtime materialization and artifact
+implementation modules are private. The package contains `py.typed`, and the entire source
+passes strict Pyright.
 
 ## Authoring
 
@@ -25,9 +26,9 @@ contains `py.typed` and the entire source passes strict Pyright.
   accepts a task `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
   `output` and `metadata` keys are not unpacked.
-- Descriptors expose `name` and `__wrapped__`. Their constructors/decorators do not
-  call provider SDKs or authenticate. Python module import is still ordinary code
-  execution, not a sandbox.
+- Descriptors expose their stable `name`; callback storage is an implementation detail.
+  Their constructors/decorators do not call provider SDKs or authenticate. Python module
+  import is still ordinary code execution, not a sandbox.
 
 ## Presence, metadata and stable identity
 

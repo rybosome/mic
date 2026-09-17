@@ -35,7 +35,7 @@ def test_low_score_and_explicit_gate_have_distinct_exit_codes(tmp_path):
 def test_invalid_execution_config_never_calls_source_or_task(tmp_path, setting, value):
     calls = []
     spec = evaluation([row()], task=lambda *args: calls.append("task"))
-    spec = replace(spec, dataset=replace(spec.dataset, __wrapped__=lambda: calls.append("source")))
+    spec = replace(spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source")))
     with pytest.raises(mic.ConfigurationError):
         mic.run(spec, output=tmp_path, **{setting: value})
     assert calls == []
@@ -96,7 +96,7 @@ def test_skip_does_not_validate_or_touch_source(tmp_path):
         raise AssertionError("source must not run")
 
     spec = evaluation([row()], skip=True, trials=0)
-    spec = replace(spec, dataset=replace(spec.dataset, __wrapped__=forbidden))
+    spec = replace(spec, dataset=replace(spec.dataset, factory=forbidden))
     result = mic.run(spec, output=tmp_path)
     assert result.status == "skipped"
     assert result.exit_code == 0
@@ -115,7 +115,7 @@ async def test_preflight_reads_source_once_and_executes_no_callbacks():
     calls = []
     spec = evaluation([row()], task=lambda *_: calls.append("task"))
     spec = replace(
-        spec, dataset=replace(spec.dataset, __wrapped__=lambda: calls.append("source") or [row()])
+        spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source") or [row()])
     )
     ready = await mic.preflight(spec)
     assert ready["tasks_executed"] == 0

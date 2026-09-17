@@ -5,15 +5,16 @@ import copy
 import time
 from typing import cast
 
-from ..artifacts import failure
-from ..models import Case, EvalSpec, JsonObject, JsonValue, ScoreContext, TaskContext, TaskResult
-from ..validation import json_object, normalize_scores, serialize, validate
+from ..models import Evaluation, JsonObject, JsonValue, ScoreContext, TaskContext, TaskResult
+from .artifacts import failure
 from .callbacks import CallbackPool
+from .contracts import Case
 from .options import Options
+from .validation import json_object, normalize_scores, serialize, validate
 
 
 async def run_case[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     row: Case[I, E, M],
     encoded: JsonObject,
     row_index: int,
@@ -48,7 +49,7 @@ async def run_case[I, O, E, M](
             ctx = TaskContext(
                 cloned.id, trial, cloned.expected, cloned.metadata, options.model_preset
             )
-            raw = await pool.invoke(spec.__wrapped__, ctx, cloned.input)
+            raw = await pool.invoke(spec.function, ctx, cloned.input)
             latencies["task_ms"] = (time.perf_counter() - phase_started) * 1000
             phase = "schema"
             metadata = copy.deepcopy(row.metadata)
@@ -83,7 +84,7 @@ async def run_case[I, O, E, M](
                     row.id,
                     trial,
                 )
-                raw_scores = await pool.invoke(scorer.__wrapped__, context)
+                raw_scores = await pool.invoke(scorer.function, context)
                 normalized = normalize_scores(raw_scores, scorer.metrics)
                 scores.extend(normalized)
             latencies["scoring_ms"] = (time.perf_counter() - phase_started) * 1000

@@ -1,11 +1,10 @@
-"""Public value models and typed callback descriptors."""
+"""Public authoring models, definition descriptors, and run results."""
 
 import math
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 
 from .errors import ConfigurationError, MissingExpectedError
 from .schema import Schema
@@ -28,15 +27,6 @@ class RawCase:
     expected: object = MISSING
     metadata: object | None = None
     id: str | None = None
-    provenance: JsonObject = field(default_factory=dict[str, JsonValue])
-
-
-@dataclass(frozen=True)
-class Case[I, E, M]:
-    id: str
-    input: I
-    expected: E | Missing
-    metadata: M | None
     provenance: JsonObject = field(default_factory=dict[str, JsonValue])
 
 
@@ -70,24 +60,6 @@ class ReadLimits:
             or self.timeout_seconds <= 0
         ):
             raise ConfigurationError("timeout_seconds must be a finite positive number")
-
-
-class DatasetHandle(Protocol):
-    @property
-    def provider(self) -> str: ...
-
-
-class DatasetRead(Protocol):
-    @property
-    def provenance(self) -> JsonObject: ...
-
-    def rows(self) -> AsyncIterator[object]: ...
-
-
-class DatasetLoader[H](Protocol):
-    def open(
-        self, handle: H, *, limits: ReadLimits
-    ) -> AbstractAsyncContextManager[DatasetRead]: ...
 
 
 @dataclass(frozen=True)
@@ -146,38 +118,29 @@ type RowMapper = Callable[[object], RawCase]
 class Dataset[I, E, M]:
     name: str
     schema: CaseSchema[I, E, M]
-    __wrapped__: SourceFactory
-    map_row: RowMapper
+    factory: SourceFactory = field(repr=False)
+    map_row: RowMapper = field(repr=False)
 
 
 @dataclass(frozen=True)
 class Scorer[I, O, E, M]:
     name: str
-    __wrapped__: Scoring[I, O, E, M]
+    function: Scoring[I, O, E, M] = field(repr=False)
     metrics: tuple[str, ...]
     requires_expected: bool = True
 
 
 @dataclass(frozen=True)
-class EvalSpec[I, O, E, M]:
+class Evaluation[I, O, E, M]:
     name: str
     dataset: Dataset[I, E, M]
     output: Schema[O]
     scorers: tuple[Scorer[I, O, E, M], ...]
-    __wrapped__: Task[I, O, E, M]
+    function: Task[I, O, E, M] = field(repr=False)
     trials: int = 1
     concurrency: int = 10
     skip: bool = False
     model_preset: str | None = None
-
-
-class Reporter(Protocol):
-    @property
-    def name(self) -> str: ...
-
-    async def prepare(self) -> None: ...
-
-    async def report(self, manifest: JsonObject, cases: Sequence[JsonObject]) -> JsonObject: ...
 
 
 @dataclass(frozen=True)

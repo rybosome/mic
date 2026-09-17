@@ -31,5 +31,5 @@ async def async_eval(ctx: mic.TaskContext[str, mic.JsonObject], value: str) -> m
 
 assert_type(text_data, mic.Dataset[str, str, mic.JsonObject])
 assert_type(exact, mic.Scorer[str, str, str, mic.JsonObject])
-assert_type(sync_eval, mic.EvalSpec[str, str, str, mic.JsonObject])
-assert_type(async_eval, mic.EvalSpec[str, str, str, mic.JsonObject])
+assert_type(sync_eval, mic.Evaluation[str, str, str, mic.JsonObject])
+assert_type(async_eval, mic.Evaluation[str, str, str, mic.JsonObject])

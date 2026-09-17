@@ -172,7 +172,7 @@ def test_estimate_invokes_factory_once_without_rows_or_tasks(
     module.data = data
     module.evaluation = evaluation
     monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.setattr(cli, "default_resolver", FakeResolver)
+    monkeypatch.setattr(cli.Resolver, "with_builtin_loaders", FakeResolver)
     assert cli.main(["estimate", f"{module.__name__}:{symbol}"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["estimate"]["estimated_bytes_processed"] == 42

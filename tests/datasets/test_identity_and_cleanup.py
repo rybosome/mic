@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 import mic
-from mic.datasets import load_dataset
+from mic._runtime.materialization import load_dataset
+from mic.providers import Resolver
 
 
 async def test_provider_digest_does_not_change_fallback_case_identity():
@@ -29,7 +30,7 @@ async def test_provider_digest_does_not_change_fallback_case_identity():
         async def open(self, handle, *, limits):
             yield Read()
 
-    resolver = mic.Resolver()
+    resolver = Resolver()
     resolver.register(Handle, Loader())
     schema = mic.case_schema(input=int, expected=int)
 

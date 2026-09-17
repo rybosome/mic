@@ -7,15 +7,15 @@ from enum import Enum
 import httpx
 import pytest
 
-from mic.datasets import load_dataset
+from mic._runtime.materialization import load_dataset
 from mic.decorators import case_schema, dataset
 from mic.errors import DatasetError
 from mic.models import ReadLimits
+from mic.providers import Resolver
 from mic.providers.bigquery import BigQueryHandle, BigQueryLoader
 from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
 from mic.providers.files import FileHandle, FileLoader
 from mic.providers.memory import MemoryLoader
-from mic.resolver import Resolver
 
 ROWS = [
     {"id": "case-001", "input": "nested text", "expected": "label", "metadata": {"team": "x"}},

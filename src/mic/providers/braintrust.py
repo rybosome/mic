@@ -12,7 +12,6 @@ import os
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Literal
 from urllib.parse import urlsplit
 
 from mic.errors import ConfigurationError, DatasetError
@@ -31,7 +30,6 @@ class BraintrustHandle:
     api_url: str | None = None
     page_size: int = 100
     timeout: float = 30.0
-    provider: Literal["braintrust"] = field(default="braintrust", init=False)
 
 
 def _settings(handle: BraintrustHandle, configured_key: str | None) -> tuple[str, str]:

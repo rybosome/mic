@@ -7,7 +7,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..artifacts import (
+from ..errors import ConfigurationError, DatasetError
+from ..models import Evaluation, JsonObject, ReadLimits, RunResult
+from ..providers.base import Resolver
+from ..reporters.base import Reporter
+from .artifacts import (
     atomic_json,
     case_errors,
     code_provenance,
@@ -16,15 +20,12 @@ from ..artifacts import (
     prepare_directory,
     write_dataset,
 )
-from ..datasets import load_dataset
-from ..errors import ConfigurationError, DatasetError
-from ..models import EvalSpec, JsonObject, ReadLimits, Reporter, RunResult
-from ..resolver import Resolver
-from ..validation import describe
 from .batch import execute
+from .materialization import load_dataset
 from .options import check_cases, resolve_options
 from .reporting import export_results, prepare_reporters
 from .summary import evaluate_gates, parse_gates, summarize
+from .validation import describe
 
 
 def _now() -> str:
@@ -32,7 +33,7 @@ def _now() -> str:
 
 
 async def preflight[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     *,
     trials: int | None = None,
     concurrency: int | None = None,
@@ -68,7 +69,7 @@ async def preflight[I, O, E, M](
 
 
 async def arun[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     *,
     output: Path | str | None = None,
     trials: int | None = None,
@@ -111,7 +112,7 @@ async def arun[I, O, E, M](
         "gates": [],
         "reporting": {},
         "artifacts": {"dataset": "dataset.jsonl", "cases": "cases.jsonl", "report": "report.html"},
-        "provenance": code_provenance(spec.__wrapped__),
+        "provenance": code_provenance(spec.function),
         "exit_code": 0,
     }
     atomic_json(destination / "run.json", manifest)
@@ -221,7 +222,7 @@ async def arun[I, O, E, M](
 
 
 def run[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     *,
     output: Path | str | None = None,
     trials: int | None = None,

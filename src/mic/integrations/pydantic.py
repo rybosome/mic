@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
+from mic._runtime.validation import dumps, json_value
 from mic.errors import ConfigurationError
-from mic.validation import dumps, json_value
 
 if TYPE_CHECKING:
     from pydantic import TypeAdapter

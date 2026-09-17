@@ -7,9 +7,9 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import cast
 
-from .errors import ConfigurationError
-from .models import JsonObject, JsonValue, Score
-from .schema import Schema
+from ..errors import ConfigurationError
+from ..models import JsonObject, JsonValue, Score
+from ..schema import Schema
 
 
 def positive_integer(name: str, value: int) -> int:
