@@ -21,7 +21,7 @@ def output_schema(context: TaskContext[str, JsonObject], text: str) -> str:
 
 
 @mic.scorer(name="unstable")
-def unstable(context: ScoreContext[str, str, str, JsonObject]) -> Score:
+def unstable(context: ScoreContext[str, str, str, JsonObject]) -> float:
     raise ValueError("Demonstration scorer error")
 
 
@@ -43,10 +43,10 @@ def nullable_data() -> list[object]:
 
 
 @mic.scorer(name="nullable_exact", requires_expected=False)
-def nullable_exact(context: ScoreContext[str, str, str | None, JsonObject]) -> Score:
+def nullable_exact(context: ScoreContext[str, str, str | None, JsonObject]) -> Score | float:
     if isinstance(context.expected, Missing) or context.expected is None:
-        return Score("nullable_exact", None, metadata={"reason": "No usable label"})
-    return Score("nullable_exact", float(context.output == context.expected))
+        return Score(None, metadata={"reason": "No usable label"})
+    return float(context.output == context.expected)
 
 
 @mic.eval(name="failures.null_score", dataset=nullable_data, output=str, scorers=[nullable_exact])

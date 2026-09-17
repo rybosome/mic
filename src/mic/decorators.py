@@ -47,7 +47,6 @@ def case_schema[I, E, M](
     expected: TypeForm[E] | Schema[E],
     metadata: TypeForm[M] | Schema[M],
     expected_policy: Literal["required", "optional"] = "required",
-    strict: bool = True,
 ) -> CaseSchema[I, E, M]: ...
 
 
@@ -57,7 +56,6 @@ def case_schema[I, E](
     input: TypeForm[I] | Schema[I],
     expected: TypeForm[E] | Schema[E],
     expected_policy: Literal["required", "optional"] = "required",
-    strict: bool = True,
 ) -> CaseSchema[I, E, JsonObject]: ...
 
 
@@ -67,7 +65,6 @@ def case_schema[I, E, M](
     expected: TypeForm[E] | Schema[E],
     metadata: TypeForm[M] | Schema[M] | None = None,
     expected_policy: Literal["required", "optional"] = "required",
-    strict: bool = True,
 ) -> CaseSchema[I, E, M] | CaseSchema[I, E, JsonObject]:
     if metadata is None:
         return CaseSchema(
@@ -75,10 +72,9 @@ def case_schema[I, E, M](
             _schema_for(expected),
             native_schema(dict[str, JsonValue]),
             expected_policy,
-            strict,
         )
     return CaseSchema(
-        _schema_for(input), _schema_for(expected), _schema_for(metadata), expected_policy, strict
+        _schema_for(input), _schema_for(expected), _schema_for(metadata), expected_policy
     )
 
 
@@ -104,10 +100,9 @@ def scorer(
     *,
     name: str,
     requires_expected: bool = True,
-    metrics: tuple[str, ...] | None = None,
 ) -> _ScorerDecorator:
     def decorate[I, O, E, M](fn: Scoring[I, O, E, M]) -> Scorer[I, O, E, M]:
-        return Scorer(name, fn, metrics if metrics is not None else (name,), requires_expected)
+        return Scorer(name, fn, requires_expected)
 
     return decorate
 
@@ -120,8 +115,6 @@ def eval[I, O, E, M](
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
-    skip: bool = False,
-    model_preset: str | None = None,
 ) -> Callable[[Task[I, O, E, M]], Evaluation[I, O, E, M]]:
     def decorate(fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
         return Evaluation(
@@ -132,8 +125,6 @@ def eval[I, O, E, M](
             fn,
             trials,
             concurrency,
-            skip,
-            model_preset,
         )
 
     return decorate

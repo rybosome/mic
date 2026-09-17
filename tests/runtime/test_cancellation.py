@@ -81,10 +81,10 @@ async def test_callback_cancellation_accounts_for_unstarted_jobs(
     task_calls: list[int] = []
 
     @mic.scorer(name="exact")
-    async def exact(ctx: mic.ScoreContext[int, int, int, mic.JsonObject]) -> mic.Score:
+    async def exact(ctx: mic.ScoreContext[int, int, int, mic.JsonObject]) -> int:
         if cancel_phase == "scorer":
             raise asyncio.CancelledError("scorer stopped itself")
-        return mic.Score("exact", 1)
+        return 1
 
     @mic.eval(
         name="callback-cancellation",
@@ -110,7 +110,6 @@ async def test_callback_cancellation_accounts_for_unstarted_jobs(
         "completed": 0,
         "failed": 0,
         "cancelled": 3,
-        "skipped": 0,
     }
     assert saved["scores"]["exact"]["unavailable_count"] == 3
     assert task_calls == [0]

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import mic
-from mic import JsonValue, Score, ScoreContext, TaskContext
+from mic import JsonValue, ScoreContext, TaskContext
 from mic.providers.files import FileHandle
 
 type Meta = dict[str, JsonValue]
@@ -15,8 +15,8 @@ def triage_data() -> FileHandle:
 
 
 @mic.scorer(name="exact", requires_expected=True)
-def exact(context: ScoreContext[str, str, str, Meta]) -> Score:
-    return Score("exact", float(context.output == context.require_expected()))
+def exact(context: ScoreContext[str, str, str, Meta]) -> float:
+    return float(context.output == context.require_expected())
 
 
 @mic.eval(

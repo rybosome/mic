@@ -48,7 +48,7 @@ def cases():
 
 @mic.scorer(name="exact")
 def exact(ctx):
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+    return float(ctx.output == ctx.require_expected())
 
 @mic.eval(name="isolated", dataset=cases, output=str, scorers=[exact])
 def predict(ctx, value):

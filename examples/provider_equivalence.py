@@ -55,7 +55,7 @@ def logical_case_id(row: object) -> RawCase:
 def braintrust_data() -> BraintrustHandle:
     return BraintrustHandle(
         dataset_id=os.environ["MIC_BRAINTRUST_DATASET_ID"],
-        version=os.environ["MIC_BRAINTRUST_VERSION"],
+        xact_id=os.environ["MIC_BRAINTRUST_XACT_ID"],
     )
 
 

@@ -42,13 +42,10 @@ async def preflight[I, O, E, M](
     resolver: Resolver | None = None,
     reporters: Sequence[Reporter] = (),
 ) -> JsonObject:
-    if spec.skip:
-        return {"name": spec.name, "status": "skipped", "executions": 0}
     options = resolve_options(
         spec,
         trials=trials,
         concurrency=concurrency,
-        model_preset=None,
         timeout=None,
         max_executions=max_executions,
     )
@@ -74,7 +71,6 @@ async def arun[I, O, E, M](
     output: Path | str | None = None,
     trials: int | None = None,
     concurrency: int | None = None,
-    model_preset: str | None = None,
     require: Sequence[str] = (),
     reporters: Sequence[Reporter] = (),
     limits: ReadLimits | None = None,
@@ -96,7 +92,7 @@ async def arun[I, O, E, M](
     (destination / "dataset.jsonl").touch()
     started = time.perf_counter()
     manifest: JsonObject = {
-        "schema_version": "mic-run-v1",
+        "schema_version": "mic-run-v2",
         "run_id": run_id,
         "name": spec.name,
         "status": "running",
@@ -105,7 +101,7 @@ async def arun[I, O, E, M](
         "duration_ms": 0,
         "dataset": {"name": spec.dataset.name, "rows": 0},
         "options": {},
-        "counts": {"planned": 0, "completed": 0, "failed": 0, "cancelled": 0, "skipped": 0},
+        "counts": {"planned": 0, "completed": 0, "failed": 0, "cancelled": 0},
         "scores": {},
         "latency": {},
         "failures": [],
@@ -118,16 +114,11 @@ async def arun[I, O, E, M](
     atomic_json(destination / "run.json", manifest)
     cases: list[JsonObject] = []
     planned = 0
-    if spec.skip:
-        manifest.update({"status": "skipped", "ended_at": _now()})
-        finish_artifacts(destination, manifest, cases)
-        return RunResult(manifest, cases, destination, 0)
     try:
         options = resolve_options(
             spec,
             trials=trials,
             concurrency=concurrency,
-            model_preset=model_preset,
             timeout=timeout,
             max_executions=max_executions,
         )
@@ -145,7 +136,6 @@ async def arun[I, O, E, M](
             "completed": 0,
             "failed": 0,
             "cancelled": 0,
-            "skipped": 0,
         }
         atomic_json(destination / "run.json", manifest)
     except (ConfigurationError, DatasetError) as exc:
@@ -227,7 +217,6 @@ def run[I, O, E, M](
     output: Path | str | None = None,
     trials: int | None = None,
     concurrency: int | None = None,
-    model_preset: str | None = None,
     require: Sequence[str] = (),
     reporters: Sequence[Reporter] = (),
     limits: ReadLimits | None = None,
@@ -249,7 +238,6 @@ def run[I, O, E, M](
             output=output,
             trials=trials,
             concurrency=concurrency,
-            model_preset=model_preset,
             require=require,
             reporters=reporters,
             limits=limits,

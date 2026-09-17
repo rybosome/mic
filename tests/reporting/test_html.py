@@ -59,7 +59,7 @@ def test_html_reader_rejects_invalid_case_json_without_pydantic(
     content: str, tmp_path: Path
 ) -> None:
     (tmp_path / "run.json").write_text(
-        json.dumps({"schema_version": "mic-run-v1"}), encoding="utf-8"
+        json.dumps({"schema_version": "mic-run-v2"}), encoding="utf-8"
     )
     (tmp_path / "cases.jsonl").write_text(content, encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Invalid case artifact"):

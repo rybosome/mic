@@ -28,7 +28,7 @@ class Fixture:
 
 
 def handle(**kwargs):
-    return BraintrustHandle(dataset_id="existing-dataset", version="0123456789abcdef", **kwargs)
+    return BraintrustHandle(dataset_id="existing-dataset", xact_id="0123456789abcdef", **kwargs)
 
 
 async def collect(fixture, *, source=None, limits=ReadLimits()):
@@ -71,7 +71,7 @@ async def test_pagination_version_missing_null_source_identity_and_custom_region
     assert rows[1].id == "two"
     assert rows[0].provenance["record_id"] == "one"
     assert rows[0].provenance["_xact_id"] == "source-version"
-    assert provenance["version"] == "0123456789abcdef"
+    assert provenance["xact_id"] == "0123456789abcdef"
     assert provenance["pages"] == 3
     assert all(
         str(request.url) == "https://api-eu.braintrust.dev/btql" for request in fixture.requests
@@ -217,7 +217,7 @@ async def test_timeout_and_cancel_close_response():
 
 
 @pytest.mark.asyncio
-async def test_no_credentials_or_version_fails_before_http(monkeypatch):
+async def test_no_credentials_or_xact_id_fails_before_http(monkeypatch):
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
 
     def forbidden(_):
@@ -227,9 +227,9 @@ async def test_no_credentials_or_version_fails_before_http(monkeypatch):
     with pytest.raises(ConfigurationError, match="API_KEY"):
         async with loader.open(handle(), limits=ReadLimits()):
             pass
-    for version in ("", "latest", "head"):
-        with pytest.raises(ConfigurationError, match="pinned version"):
-            await collect(forbidden, source=BraintrustHandle("id", version))
+    for xact_id in ("", "latest", "head"):
+        with pytest.raises(ConfigurationError, match="pinned xact_id"):
+            await collect(forbidden, source=BraintrustHandle("id", xact_id))
     with pytest.raises(ConfigurationError, match="HTTPS"):
         await collect(forbidden, source=handle(api_url="http://remote.example"))
 

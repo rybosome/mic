@@ -62,8 +62,8 @@ def tickets() -> list[mic.RawCase]:
     )]
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> mic.Score:
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> float:
+    return float(ctx.output == ctx.require_expected())
 
 @mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
 def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
@@ -109,7 +109,7 @@ BigQueryHandle(
     sql="SELECT id, input, expected FROM `my-project.evals.cases` ORDER BY id",
     maximum_bytes_billed=100_000_000,
 )
-BraintrustHandle(dataset_id="existing-id", version="pinned-version")
+BraintrustHandle(dataset_id="existing-id", xact_id="pinned-xact-id")
 ```
 
 Install cloud extras with `uv sync --frozen --all-extras`. BigQuery uses Application
@@ -133,7 +133,7 @@ upload failure handling, exact null representation, and the pinned SDK boundary.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Execution succeeded; any explicit quality gates passed; or definition skipped |
+| 0 | Execution succeeded and any explicit quality gates passed |
 | 1 | A task/schema/scorer, artifact write, quality gate, or export failed |
 | 2 | Invalid configuration or dataset preflight failure |
 | 130 | Interrupted; partial local evidence retained where writable |

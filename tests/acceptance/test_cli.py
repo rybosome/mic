@@ -97,7 +97,7 @@ def test_nullable_scores_preserve_missing_vs_null(tmp_path: Path) -> None:
     assert cases_by_id["null"]["expected"] is None
 
 
-def test_async_trials_model_preset(tmp_path: Path) -> None:
+def test_async_trials(tmp_path: Path) -> None:
     process = invoke(
         "run",
         "examples.async_eval:uppercase",
@@ -105,8 +105,6 @@ def test_async_trials_model_preset(tmp_path: Path) -> None:
         "2",
         "--concurrency",
         "2",
-        "--model-preset",
-        "offline-test",
         "--output",
         str(tmp_path / "async"),
         "--json",
@@ -118,7 +116,6 @@ def test_async_trials_model_preset(tmp_path: Path) -> None:
         json.loads(line)
         for line in (tmp_path / "async" / "cases.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert all(case["task_metadata"]["model_preset"] == "offline-test" for case in cases)
     assert [(case["row_index"], case["trial"]) for case in cases] == sorted(
         (case["row_index"], case["trial"]) for case in cases
     )

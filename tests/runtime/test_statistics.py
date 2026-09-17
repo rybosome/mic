@@ -1,7 +1,7 @@
 import pytest
 
 import mic
-from mic._runtime.validation import normalize_scores, numeric_stats
+from mic._runtime.validation import normalize_score, numeric_stats
 
 
 @pytest.mark.parametrize(
@@ -31,53 +31,39 @@ def test_numeric_statistics_use_nearest_rank(
 
 
 @pytest.mark.parametrize(
-    ("raw", "metrics", "expected"),
+    ("raw", "name", "expected"),
     [
         (
-            mic.Score("exact", 0),
-            ("exact",),
-            [{"name": "exact", "value": 0, "metadata": {}}],
+            0,
+            "exact",
+            {"name": "exact", "value": 0, "metadata": {}},
         ),
         (
-            mic.Score("applicable", None),
-            ("applicable",),
-            [{"name": "applicable", "value": None, "metadata": {}}],
+            None,
+            "applicable",
+            {"name": "applicable", "value": None, "metadata": {}},
         ),
         (
-            [mic.Score("a", 0.25), mic.Score("b", 1, {"reason": "match"})],
-            ("a", "b"),
-            [
-                {"name": "a", "value": 0.25, "metadata": {}},
-                {"name": "b", "value": 1, "metadata": {"reason": "match"}},
-            ],
+            mic.Score(1, {"reason": "match"}),
+            "evidence",
+            {"name": "evidence", "value": 1, "metadata": {"reason": "match"}},
         ),
     ],
 )
-def test_valid_scores_normalize(
-    raw: object, metrics: tuple[str, ...], expected: list[dict[str, object]]
-) -> None:
-    assert normalize_scores(raw, metrics) == expected
+def test_valid_scores_normalize(raw: object, name: str, expected: dict[str, object]) -> None:
+    assert normalize_score(raw, name) == expected
 
 
 @pytest.mark.parametrize(
     "raw",
     [
         [],
-        mic.Score("", 1),
-        mic.Score(" ", 1),
-        mic.Score("bad", True),
-        mic.Score("bad", float("nan")),
-        mic.Score("bad", float("inf")),
-        mic.Score("bad", 1, []),
+        True,
+        float("nan"),
+        float("inf"),
+        mic.Score(1, []),
     ],
 )
 def test_invalid_scores_are_rejected(raw: object) -> None:
     with pytest.raises((ValueError, TypeError)):
-        normalize_scores(raw, ("bad",))
-
-
-def test_duplicate_or_undeclared_metrics_are_rejected() -> None:
-    with pytest.raises(ValueError, match="Duplicate"):
-        normalize_scores([mic.Score("a", 1), mic.Score("a", 0)], ("a",))
-    with pytest.raises(ValueError, match="declared"):
-        normalize_scores(mic.Score("unexpected", 1), ("expected",))
+        normalize_score(raw, "bad")
