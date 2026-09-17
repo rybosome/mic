@@ -95,9 +95,13 @@ def test_empty_dataset_and_null_only_metric_do_not_pass_a_gate(tmp_path):
     assert result.exit_code == 1
 
 
-async def test_library_sync_entrypoint_gives_notebook_instruction():
+async def test_sync_entrypoints_give_async_host_instructions():
     with pytest.raises(mic.ConfigurationError, match="await mic.arun"):
         mic.run(evaluation([row()]))
+    with pytest.raises(mic.ConfigurationError, match="await mic.apreflight"):
+        mic.preflight(evaluation([row()]))
+    with pytest.raises(mic.ConfigurationError, match="await mic.ainspect_dataset"):
+        mic.inspect_dataset(evaluation([row()]).dataset)
 
 
 def test_resource_caps_prevent_all_task_execution(tmp_path):
@@ -109,15 +113,28 @@ def test_resource_caps_prevent_all_task_execution(tmp_path):
     assert manifest(tmp_path)["exit_code"] == 2
 
 
-async def test_preflight_reads_source_once_and_executes_no_callbacks():
+async def test_apreflight_reads_source_once_and_executes_no_callbacks():
     calls = []
     spec = evaluation([row()], task=lambda *_: calls.append("task"))
     spec = replace(
         spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source") or [row()])
     )
-    ready = await mic.preflight(spec)
+    ready = await mic.apreflight(spec)
     assert ready["tasks_executed"] == 0
     assert calls == ["source"]
+
+
+def test_sync_preflight_and_inspection_use_blocking_entrypoints():
+    spec = evaluation([row()])
+    ready = mic.preflight(spec)
+    inspected = mic.inspect_dataset(spec.dataset, limit=1)
+    assert ready["tasks_executed"] == 0
+    assert inspected["dataset"]["rows"] == 1
+
+
+async def test_async_dataset_inspection_uses_prefixed_entrypoint():
+    inspected = await mic.ainspect_dataset(evaluation([row()]).dataset, limit=1)
+    assert inspected["dataset"]["rows"] == 1
 
 
 def test_required_scorer_rejects_unlabeled_cases_before_execution(tmp_path):

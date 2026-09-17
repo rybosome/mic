@@ -27,6 +27,7 @@ dataset loading before tasks run; it never selects an implicit prefix. `mic
 inspect ... --limit N` and `inspect_dataset(..., limit=N)` deliberately select a
 prefix. The source adapters check raw sizes where available, and the materializer
 also checks the normalized, serialized case sizes.
+`inspect_dataset` is blocking; async hosts use `await ainspect_dataset(...)`.
 
 Rows normally contain `input`, optional `expected`, optional object-shaped
 `metadata`, and optional string `id`. Missing `expected` is distinct from an

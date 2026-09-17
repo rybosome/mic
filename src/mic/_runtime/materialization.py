@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from .._async import drain
+from .._async import drain, run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import MISSING, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
 from ..providers.base import Resolver
@@ -197,7 +197,7 @@ def _mapped_case(value: object) -> RawCase:
     return value
 
 
-async def inspect_dataset[I, E, M](
+async def ainspect_dataset[I, E, M](
     dataset: Dataset[I, E, M],
     *,
     limit: int | None = None,
@@ -206,3 +206,17 @@ async def inspect_dataset[I, E, M](
 ) -> JsonObject:
     snapshot = await load_dataset(dataset, limits=limits, resolver=resolver, limit=limit)
     return {"dataset": snapshot.summary, "rows": cast(list[JsonValue], snapshot.rows)}
+
+
+def inspect_dataset[I, E, M](
+    dataset: Dataset[I, E, M],
+    *,
+    limit: int | None = None,
+    limits: ReadLimits | None = None,
+    resolver: Resolver | None = None,
+) -> JsonObject:
+    return run_sync(
+        "mic.inspect_dataset()",
+        "mic.ainspect_dataset",
+        lambda: ainspect_dataset(dataset, limit=limit, limits=limits, resolver=resolver),
+    )

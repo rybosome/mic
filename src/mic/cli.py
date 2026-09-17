@@ -150,23 +150,19 @@ def _execute(args: argparse.Namespace) -> int:
         if args.command == "estimate":
             _print_json(asyncio.run(_estimate(dataset, args.dataset_timeout)))
             return 0
-        _print_json(
-            asyncio.run(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
-        )
+        _print_json(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
         return 0
     if not isinstance(definition, mic.Evaluation):
         raise ConfigurationError(f"{args.command} requires an evaluation definition")
     reporters = _reporters(args)
     if args.command == "preflight":
-        result: JsonObject = asyncio.run(
-            mic.preflight(
-                definition,
-                trials=args.trials,
-                concurrency=args.concurrency,
-                limits=_read_limits(args),
-                max_executions=args.max_executions,
-                reporters=reporters,
-            )
+        result: JsonObject = mic.preflight(
+            definition,
+            trials=args.trials,
+            concurrency=args.concurrency,
+            limits=_read_limits(args),
+            max_executions=args.max_executions,
+            reporters=reporters,
         )
         _print_json(result)
         return 0
