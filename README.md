@@ -1,4 +1,4 @@
-# mic for Python
+# mic
 
 [![CI](https://github.com/rybosome/mic/actions/workflows/ci.yml/badge.svg)](https://github.com/rybosome/mic/actions/workflows/ci.yml)
 
