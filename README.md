@@ -41,6 +41,9 @@ from pydantic import BaseModel
 
 import mic
 
+##
+## Define a dataset
+##
 
 class Ticket(BaseModel):
     subject: str
@@ -49,26 +52,6 @@ class Ticket(BaseModel):
 
 class Classification(BaseModel):
     label: Literal["bug", "feature", "question"]
-
-
-def classify_ticket(ticket: Ticket) -> Classification:
-    from openai import OpenAI
-
-    # Create the client only when the task runs, and close it after the call.
-    with OpenAI(timeout=30, max_retries=0) as client:
-        response = client.responses.parse(
-            model="gpt-4.1-mini",
-            instructions=(
-                "Classify the support ticket as "
-                "bug (broken behavior), feature (new capability), or question (how-to)."
-            ),
-            input=ticket.model_dump_json(),
-            text_format=Classification,
-            store=False,
-        )
-        if response.output_parsed is None:
-            raise ValueError("The model did not return a classification.")
-        return response.output_parsed
 
 
 @mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
@@ -93,6 +76,10 @@ def tickets() -> list[mic.RawCase]:
         ),
     ]
 
+##
+## Define scoring
+##
+
 
 @mic.scorer(name="accuracy", requires_expected=True)
 def accuracy(
@@ -100,12 +87,32 @@ def accuracy(
 ) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
 
+##
+## Define the task
+##
+
 
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
 def classify(
     ctx: mic.TaskContext[Classification, mic.JsonObject], ticket: Ticket
 ) -> Classification:
-    return classify_ticket(ticket)
+    from openai import OpenAI
+
+    # Create the client only when the task runs, and close it after the call.
+    with OpenAI(timeout=30, max_retries=0) as client:
+        response = client.responses.parse(
+            model="gpt-4.1-mini",
+            instructions=(
+                "Classify the support ticket as "
+                "bug (broken behavior), feature (new capability), or question (how-to)."
+            ),
+            input=ticket.model_dump_json(),
+            text_format=Classification,
+            store=False,
+        )
+        if response.output_parsed is None:
+            raise ValueError("The model did not return a classification.")
+        return response.output_parsed
 ```
 
 `Ticket` gives the task typed inputs; `Classification` defines both the expected
