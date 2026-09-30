@@ -122,6 +122,7 @@ class BraintrustReporter:
         self._sdk: Any = sdk
         self._injected = sdk is not None
         self._state: Any = None
+        self._prepared = False
 
     async def prepare(self) -> None:
         if not self.project.strip():
@@ -145,9 +146,11 @@ class BraintrustReporter:
                 ) from exc
         if not callable(getattr(self._sdk, "init", None)):
             raise ConfigurationError("Braintrust SDK must expose init()")
+        self._prepared = True
 
     async def report(self, manifest: JsonObject, cases: Sequence[JsonObject]) -> JsonObject:
-        await self.prepare()
+        if not self._prepared:
+            raise ConfigurationError("Braintrust reporter must be prepared before reporting")
         events = _events(manifest, cases)
         upload = asyncio.create_task(asyncio.to_thread(self._upload, manifest, cases, events))
         try:

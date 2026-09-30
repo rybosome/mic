@@ -3,7 +3,7 @@ from mic.models import JsonObject
 
 def sample() -> tuple[JsonObject, list[JsonObject]]:
     manifest: JsonObject = {
-        "schema_version": "mic-run-v1",
+        "schema_version": "mic-run-v2",
         "name": "<script>bad()</script>",
         "run_id": "run-1",
         "status": "completed",

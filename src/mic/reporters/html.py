@@ -77,8 +77,8 @@ def write_report(run_path: Path, output: Path | None = None) -> Path:
                     f"Report output would overwrite source artifact {artifact}"
                 )
         manifest = json_object(loads(run_path.read_text(encoding="utf-8")))
-        if manifest.get("schema_version") != "mic-run-v1":
-            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v1")
+        if manifest.get("schema_version") != "mic-run-v2":
+            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v2")
         cases_path = run_path.parent / "cases.jsonl"
         cases: list[JsonObject] = []
         with cases_path.open(encoding="utf-8") as stream:

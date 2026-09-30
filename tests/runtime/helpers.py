@@ -13,7 +13,7 @@ def evaluation(rows, *, task=None, scorers=None, schema=None, output=object, **o
 
     @mic.scorer(name="exact")
     def exact(ctx: mic.ScoreContext[object, object, object, mic.JsonObject]):
-        return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+        return float(ctx.output == ctx.require_expected())
 
     callback = task or (lambda _ctx, value: value)
     return mic.eval(

@@ -31,10 +31,9 @@ def summarize[I, O, E, M](
         "completed": completed,
         "failed": failed,
         "cancelled": cancelled_count,
-        "skipped": 0,
     }
     aggregates: JsonObject = {}
-    for metric in sorted(metric for scorer in spec.scorers for metric in scorer.metrics):
+    for metric in sorted(scorer.name for scorer in spec.scorers):
         values: list[float] = []
         null_count = 0
         for case in cases:
@@ -74,7 +73,7 @@ _COMPARATORS: dict[str, Callable[[float, float], bool]] = {
 def parse_gates[I, O, E, M](
     spec: Evaluation[I, O, E, M], expressions: Sequence[str]
 ) -> list[tuple[str, str, str, float]]:
-    allowed = {metric for scorer in spec.scorers for metric in scorer.metrics}
+    allowed = {scorer.name for scorer in spec.scorers}
     parsed: list[tuple[str, str, str, float]] = []
     for expression in expressions:
         match = _GATE.fullmatch(expression.strip())

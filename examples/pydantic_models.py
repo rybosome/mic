@@ -24,8 +24,8 @@ def requests() -> list[mic.RawCase]:
 
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Request, Answer, Answer, mic.JsonObject]) -> mic.Score:
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+def exact(ctx: mic.ScoreContext[Request, Answer, Answer, mic.JsonObject]) -> float:
+    return float(ctx.output == ctx.require_expected())
 
 
 @mic.eval(name="pydantic.double", dataset=requests, output=pydantic_schema(Answer), scorers=[exact])

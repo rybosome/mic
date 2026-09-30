@@ -17,12 +17,12 @@ from .helpers import evaluation, row
 def test_scorer_timeout_retains_output_and_earlier_scores(tmp_path):
     @mic.scorer(name="first")
     async def first(ctx):
-        return mic.Score("first", 1)
+        return 1
 
     @mic.scorer(name="slow")
     async def slow(ctx):
         await asyncio.Event().wait()
-        return mic.Score("slow", 1)
+        return 1
 
     async def task(ctx, value):
         return value
@@ -68,7 +68,7 @@ def test_trial_and_scorer_mutation_are_isolated(tmp_path):
         ctx.output["answer"].append(3)
         ctx.expected["answer"].append(3)
         ctx.metadata["label"] = "scorer mutation"
-        return mic.Score("mutator", 1)
+        return 1
 
     @mic.scorer(name="observer")
     def observe(ctx):
@@ -77,7 +77,7 @@ def test_trial_and_scorer_mutation_are_isolated(tmp_path):
         assert ctx.output == expected_value
         assert ctx.expected == expected_value
         assert ctx.metadata == {"label": "original"}
-        return mic.Score("observer", 1)
+        return 1
 
     result = mic.run(
         evaluation(
@@ -104,7 +104,7 @@ def test_typed_metadata_is_projected_merged_and_hydrated(tmp_path):
         assert isinstance(ctx.metadata, Metadata)
         assert ctx.metadata.label == "task"
         assert ctx.metadata.model == "fixture"
-        return mic.Score("metadata", 1)
+        return 1
 
     schema = mic.case_schema(input=int, expected=int, metadata=Metadata)
     spec = evaluation(
@@ -131,7 +131,7 @@ def test_case_failure_does_not_stop_other_rows(tmp_path, phase):
     def score(ctx):
         if ctx.input == 1 and phase == "scorer":
             raise RuntimeError("expected scorer failure")
-        return mic.Score("check", 1)
+        return 1
 
     result = mic.run(
         evaluation([row(), row(2, id="b")], task=task, scorers=[score], output=int), output=tmp_path
@@ -146,17 +146,17 @@ def test_case_failure_does_not_stop_other_rows(tmp_path, phase):
 def test_successful_scores_survive_a_later_scorer_failure(tmp_path):
     @mic.scorer(name="first")
     def first(ctx):
-        return mic.Score("first", 0.8)
+        return 0.8
 
-    @mic.scorer(name="later", metrics=("a", "b"))
+    @mic.scorer(name="later")
     def later(ctx):
-        return [mic.Score("a", 0.2), mic.Score("b", float("nan"))]
+        return float("nan")
 
     result = mic.run(evaluation([row()], scorers=[first, later]), output=tmp_path)
     assert result.cases[0]["output"] == 1
     assert result.cases[0]["scores"] == [{"name": "first", "value": 0.8, "metadata": {}}]
     assert result.manifest["scores"]["first"]["mean"] == 0.8
-    assert result.manifest["scores"]["a"]["unavailable_count"] == 1
+    assert result.manifest["scores"]["later"]["unavailable_count"] == 1
     assert result.exit_code == 1
 
 
@@ -181,7 +181,7 @@ def test_unlabeled_and_present_null_remain_distinct_on_disk(tmp_path):
     @mic.scorer(name="optional", requires_expected=False)
     def scorer(ctx):
         seen.append(isinstance(ctx.expected, mic.Missing))
-        return mic.Score("optional", None)
+        return None
 
     schema = mic.case_schema(input=int, expected=mic.schema(int | None), expected_policy="optional")
     result = mic.run(
