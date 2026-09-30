@@ -5,12 +5,18 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      revision:
+        description: Exact commit to verify (defaults to the triggering commit)
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -21,6 +27,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -75,6 +84,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -98,6 +110,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -112,10 +127,29 @@ jobs:
         run: uv sync --frozen --python 3.12
 
       - name: Build wheel and source distribution
-        run: uv build
+        run: uv build --no-create-gitignore
+
+      - name: Validate release metadata and upload set
+        run: uv run python scripts/verify_release.py artifacts
+
+      - name: Check package metadata and README rendering
+        run: uv run twine check --strict dist/*
 
       - name: Verify clean installation and package contents
         run: uv run python scripts/verify_packaging.py
+
+      - name: Rebuild and verify wheel from source distribution
+        run: |
+          uv build dist/*.tar.gz --wheel --out-dir .artifacts/rebuilt
+          uv run python scripts/verify_packaging.py --wheel .artifacts/rebuilt/*.whl --output .artifacts/packaging/from-sdist.json
+
+      - name: Save verified distributions for publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload distributions and verification evidence
         if: always()
