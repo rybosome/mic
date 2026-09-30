@@ -4,19 +4,21 @@ import hashlib
 import importlib.metadata
 import platform
 import sys
+import time
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from ..errors import ConfigurationError
 from ..models import JsonObject, JsonValue
+from .files import atomic_write
 from .validation import dumps, json_object
 
 
 def atomic_json(path: Path, value: JsonObject) -> None:
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(dumps(value) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    atomic_write(path, (dumps(value) + "\n",))
 
 
 def prepare_directory(path: Path) -> None:
@@ -26,9 +28,7 @@ def prepare_directory(path: Path) -> None:
 
 
 def write_dataset(path: Path, rows: Sequence[JsonObject]) -> None:
-    with path.open("w", encoding="utf-8") as stream:
-        for row in rows:
-            stream.write(dumps(row) + "\n")
+    atomic_write(path, (dumps(row) + "\n" for row in rows))
 
 
 def append_case(path: Path, case: JsonObject) -> None:
@@ -36,14 +36,72 @@ def append_case(path: Path, case: JsonObject) -> None:
         stream.write(dumps(case) + "\n")
 
 
-def finish_artifacts(path: Path, manifest: JsonObject, cases: Sequence[JsonObject]) -> None:
+@dataclass
+class Persistence:
+    """Successful writes and all failed attempts, without claiming disk recovery."""
+
+    written: set[str] = field(default_factory=set[str])
+    errors: list[tuple[str, Exception]] = field(default_factory=list[tuple[str, Exception]])
+
+    def annotate(self, exc: BaseException, path: Path) -> None:
+        if self.errors:
+            exc.add_note(f"Local evidence in {path} may be incomplete or stale")
+            for name, error in self.errors:
+                exc.add_note(f"Could not persist {name}: {type(error).__name__}: {error}")
+        elif "report.html" in self.written:
+            exc.add_note(f"Local evidence: {path / 'report.html'}")
+
+
+def has_artifact_failure(manifest: JsonObject) -> bool:
+    return any(
+        isinstance(error, dict) and error.get("phase") == "artifact"
+        for error in cast(list[JsonValue], manifest["failures"])
+    )
+
+
+def end_run(manifest: JsonObject, *, started: float) -> None:
+    """Stamp terminal timing even when no output directory could be acquired."""
+    manifest["ended_at"] = datetime.now(UTC).isoformat()
+    manifest["duration_ms"] = (time.perf_counter() - started) * 1000
+
+
+def finish_artifacts(
+    path: Path, manifest: JsonObject, cases: Sequence[JsonObject], *, started: float
+) -> Persistence:
+    """Save a terminal outcome and attempt one bounded recovery after write failures.
+
+    Both destinations are attempted independently. Recovery reprojects the updated
+    failure manifest; persistent faults may leave disk behind the in-memory result.
+    Setup errors (2) and cancellation (130) retain their original precedence.
+    """
     from ..reporters.html import render_report
 
-    atomic_json(path / "run.json", manifest)
-    report = path / "report.html"
-    temporary = report.with_name("report.html.tmp")
-    temporary.write_text(render_report(manifest, cases), encoding="utf-8")
-    temporary.replace(report)
+    end_run(manifest, started=started)
+    result = Persistence()
+    for _ in range(2):
+        errors: list[tuple[str, Exception]] = []
+        for name in ("run.json", "report.html"):
+            try:
+                if name == "run.json":
+                    atomic_json(path / name, manifest)
+                else:
+                    atomic_write(path / name, (render_report(manifest, cases),))
+                result.written.add(name)
+            except Exception as exc:
+                # Rendering is an artifact boundary too. BaseException (including
+                # cancellation) deliberately remains outside this recovery path.
+                errors.append((name, exc))
+                result.written.discard(name)
+        if not errors:
+            break
+        result.errors.extend(errors)
+        for name, exc in errors:
+            record = failure("artifact", exc)
+            record["message"] = f"Could not persist {name}: {exc}"
+            cast(list[JsonValue], manifest["failures"]).append(record)
+        if manifest["exit_code"] not in (2, 130):
+            manifest.update({"status": "failed", "exit_code": 1})
+    return result
 
 
 def code_provenance(fn: object) -> JsonObject:
@@ -77,7 +135,7 @@ def code_provenance(fn: object) -> JsonObject:
             metadata["source_sha256"] = hashlib.sha256(source_path.read_bytes()).hexdigest()
     # A framework content hash also works outside Git and is meaningful for an
     # editable install with uncommitted changes.
-    package = Path(__file__).parent
+    package = Path(__file__).parents[1]
     hasher = hashlib.sha256()
     for source in sorted(package.rglob("*.py")):
         hasher.update(str(source.relative_to(package)).encode())

@@ -19,6 +19,11 @@ Cloud adapters have contract tests and optional-SDK compatibility checks. Live
 verification requires explicit fixture configuration; skipped tests are not live
 verification evidence.
 
+Source provenance is persisted evidence and may include paths, SQL and parameters,
+dataset identifiers, and record IDs. Keep credentials out of these fields and out
+of user mapper exceptions. See [sensitive evidence and sharing](reporting.md#sensitive-evidence-and-sharing)
+for what is embedded in reports and sent during optional export.
+
 ## Shared limits and identity
 
 `ReadLimits` defaults to `max_rows=10_000`, `max_bytes=67_108_864`,

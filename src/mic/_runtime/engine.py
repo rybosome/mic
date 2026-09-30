@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from .._async import run_sync
 from ..errors import ConfigurationError, DatasetError
@@ -16,8 +17,10 @@ from .artifacts import (
     atomic_json,
     case_errors,
     code_provenance,
+    end_run,
     failure,
     finish_artifacts,
+    has_artifact_failure,
     prepare_directory,
     write_dataset,
 )
@@ -113,9 +116,6 @@ async def arun[I, O, E, M](
     destination = (
         (Path(output) if output is not None else Path(".mic/runs") / run_id).expanduser().resolve()
     )
-    prepare_directory(destination)
-    (destination / "cases.jsonl").touch()
-    (destination / "dataset.jsonl").touch()
     started = time.perf_counter()
     manifest: JsonObject = {
         "schema_version": "mic-run-v2",
@@ -134,13 +134,19 @@ async def arun[I, O, E, M](
         "gates": [],
         "reporting": {},
         "artifacts": {"dataset": "dataset.jsonl", "cases": "cases.jsonl", "report": "report.html"},
-        "provenance": code_provenance(spec.function),
+        "provenance": {},
         "exit_code": 0,
     }
-    atomic_json(destination / "run.json", manifest)
     cases: list[JsonObject] = []
     planned = 0
+    admitted = False
     try:
+        prepare_directory(destination)
+        admitted = True
+        (destination / "cases.jsonl").touch()
+        (destination / "dataset.jsonl").touch()
+        manifest["provenance"] = code_provenance(spec.function)
+        atomic_json(destination / "run.json", manifest)
         options = resolve_options(
             spec,
             trials=trials,
@@ -165,42 +171,46 @@ async def arun[I, O, E, M](
         }
         atomic_json(destination / "run.json", manifest)
     except (ConfigurationError, DatasetError) as exc:
+        if not admitted:
+            # A refused destination belongs to someone else; never write a report into it.
+            raise
         manifest.update(
             {
                 "status": "failed",
                 "exit_code": 2,
-                "ended_at": _now(),
-                "duration_ms": (time.perf_counter() - started) * 1000,
                 "failures": [
                     failure("dataset" if isinstance(exc, DatasetError) else "configuration", exc)
                 ],
             }
         )
-        finish_artifacts(destination, manifest, cases)
-        exc.add_note(f"Local evidence: {destination / 'report.html'}")
+        persisted = finish_artifacts(destination, manifest, cases, started=started)
+        persisted.annotate(exc, destination)
         raise
     except asyncio.CancelledError as exc:
         manifest.update(
             {
                 "status": "cancelled",
                 "exit_code": 130,
-                "ended_at": _now(),
                 "failures": [failure("cancelled", exc)],
             }
         )
-        finish_artifacts(destination, manifest, cases)
+        persisted = finish_artifacts(destination, manifest, cases, started=started)
+        persisted.annotate(exc, destination)
         raise
     except OSError as exc:
         manifest.update(
             {
                 "status": "failed",
                 "exit_code": 1,
-                "ended_at": _now(),
-                "duration_ms": (time.perf_counter() - started) * 1000,
                 "failures": [failure("artifact", exc)],
             }
         )
-        finish_artifacts(destination, manifest, cases)
+        if admitted:
+            finish_artifacts(destination, manifest, cases, started=started)
+        else:
+            # Failure to check/acquire the directory does not authorize replacing
+            # files that may already exist there.
+            end_run(manifest, started=started)
         return RunResult(manifest, cases, destination, 1)
     batch = await execute(spec, snapshot, options, destination)
     cases, interrupted, runtime_error = batch.cases, batch.interrupted, batch.error
@@ -226,14 +236,15 @@ async def arun[I, O, E, M](
             if exit_code
             else "completed",
             "exit_code": exit_code,
-            "ended_at": _now(),
-            "duration_ms": (time.perf_counter() - started) * 1000,
         }
     )
-    finish_artifacts(destination, manifest, cases)
+    persisted = finish_artifacts(destination, manifest, cases, started=started)
     if interrupted is not None:
+        persisted.annotate(interrupted, destination)
         raise interrupted
-    exit_code = await export_results(reporters, manifest, cases, destination, exit_code)
+    if not has_artifact_failure(manifest):
+        await export_results(reporters, manifest, cases, destination, started=started)
+    exit_code = cast(int, manifest["exit_code"])
     return RunResult(manifest, cases, destination, exit_code)
 
 

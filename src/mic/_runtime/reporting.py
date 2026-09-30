@@ -33,8 +33,9 @@ async def export_results(
     manifest: JsonObject,
     cases: Sequence[JsonObject],
     destination: Path,
-    exit_code: int,
-) -> int:
+    *,
+    started: float,
+) -> None:
     report_results: JsonObject = {}
     manifest["reporting"] = report_results
     for reporter in reporters:
@@ -49,7 +50,8 @@ async def export_results(
             }
             manifest.update({"status": "cancelled", "exit_code": 130})
             cast(list[JsonValue], manifest["failures"]).append(failure("reporting", exc))
-            finish_artifacts(destination, manifest, cases)
+            persisted = finish_artifacts(destination, manifest, cases, started=started)
+            persisted.annotate(exc, destination)
             raise
         except Exception as exc:
             report_results[reporter.name] = {
@@ -57,8 +59,10 @@ async def export_results(
                 "error": str(exc),
                 "type": type(exc).__name__,
             }
-            exit_code = 1
             manifest["status"] = "failed"
-            manifest["exit_code"] = exit_code
-        finish_artifacts(destination, manifest, cases)
-    return exit_code
+            manifest["exit_code"] = 1
+        persisted = finish_artifacts(destination, manifest, cases, started=started)
+        if persisted.errors:
+            # An upload may already have happened. Never replay it, or begin another
+            # remote side effect when its local outcome cannot be saved reliably.
+            break

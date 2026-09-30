@@ -4,32 +4,16 @@ import base64
 import hashlib
 import html
 import json
-import os
 import re
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from mic._runtime.files import atomic_write
 from mic._runtime.validation import json_object, loads
 from mic.errors import ConfigurationError
 from mic.models import JsonObject
 
 _TEMPLATES = Path(__file__).parent / "templates"
-
-
-def _write_atomic(destination: Path, rendered: str) -> None:
-    """Keep a previous report intact if a replacement cannot be written."""
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=destination.parent, prefix=".mic-report-", delete=False
-        ) as stream:
-            temporary = Path(stream.name)
-            stream.write(rendered)
-        os.replace(temporary, destination)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
 
 
 def render_report(manifest: JsonObject, cases: Sequence[JsonObject]) -> str:
@@ -92,7 +76,7 @@ def write_report(run_path: Path, output: Path | None = None) -> Path:
                         ) from exc
         rendered = render_report(manifest, cases)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        _write_atomic(destination, rendered)
+        atomic_write(destination, (rendered,))
         return destination
     except (OSError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"Cannot render report from {run_path}: {exc}") from exc
