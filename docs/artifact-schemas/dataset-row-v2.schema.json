@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/dataset-row-v2.schema.json",
+  "title": "Mic v2 normalized dataset row",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "input": {},
+    "expected": {},
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "input"
+  ],
+  "additionalProperties": false
+}

@@ -100,6 +100,10 @@ def verify_archives(wheel, sdist):
                     assert archive.extractfile(member).read() == local.read_bytes(), (
                         f"Source archive differs from source {local}"
                     )
+        relative_members = {str(Path(*Path(member).parts[1:])) for member in members}
+        for path in (ROOT / "docs/artifact-schemas").glob("*.json"):
+            assert str(path.relative_to(ROOT)) in relative_members, f"Schema missing: {path}"
+        assert "docs/artifacts.md" in relative_members, "Artifact reference missing from sdist"
     files = sorted(
         [ROOT / "LICENSE", ROOT / "README.md", ROOT / "pyproject.toml"]
         + [

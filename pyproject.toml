@@ -32,7 +32,19 @@ braintrust = ["braintrust==0.39.0"]
 pydantic = ["pydantic>=2.11,<3"]
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2", "pyright>=1.1.400,<2", "ruff>=0.11,<1", "httpx>=0.27,<1", "pydantic>=2.11,<3", "typing_extensions>=4.13,<5", "coverage>=7.6,<8"]
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pyright>=1.1.400,<2",
+    "ruff>=0.11,<1",
+    "httpx>=0.27,<1",
+    "pydantic>=2.11,<3",
+    "typing_extensions>=4.13,<5",
+    "coverage>=7.6,<8",
+    "jsonschema>=4.26,<5",
+    "referencing>=0.37,<1",
+    "rfc3339-validator>=0.1.4,<1",
+]
 
 [project.scripts]
 mic = "mic.cli:main"

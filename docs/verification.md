@@ -60,6 +60,30 @@ Coverage is a guide to untested behavior rather than a release claim. CLI subpro
 clean-wheel smoke runs, and Node DOM tests have separate pass/fail results and are not
 fully attributed to the main Python coverage process.
 
+### Artifact conformance and coverage gates
+
+The [artifact schemas](artifacts.md) are checked against real completed, failed,
+cancelled, and partial-run records. Negative tests mutate fields to prove that
+invalid versions, statuses, coordinates, types, and required-field omissions are
+rejected. References resolve locally; format validation and finite-JSON checks are
+explicit. `jsonschema`, `referencing`, and the date-time checker are development-only
+dependencies, never core runtime or reader dependencies.
+
+The canonical verifier enforces **93% statement coverage** and **84% branch coverage**
+of `mic` in the main pytest process. `scripts/check_coverage.py` compares raw covered
+and total counts separately, without rounding. The combined percentage displayed
+by coverage.py is not the statement percentage. Measurements, thresholds, and outcomes
+are recorded in `coverage-gates.json`; missing/malformed evidence fails verification.
+Previous coverage evidence is cleared before collection to prevent stale passes.
+No measured statements is an error; a measured program with no branches has no
+branch obligations. The floors guard regressions, not complete behavioral coverage.
+
+Focused checks:
+
+```console
+uv run pytest -q tests/runtime/test_artifact_contract.py tests/verification/test_coverage.py
+```
+
 ## Dataclass and dependency walkthrough
 
 Run `uv run --no-dev mic inspect examples.structured:tickets --limit 2`, then run

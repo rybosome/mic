@@ -26,6 +26,8 @@ the process environment.
 
 ## Sensitive evidence and sharing
 
+For field definitions and machine-readable schemas, see the [artifact contract](artifacts.md).
+
 Treat the run directory and HTML report as copies of your evaluation data. The
 dataset snapshot contains inputs, expected values, metadata, and IDs. Case records
 add outputs, task and score metadata, source provenance, and errors. The manifest
