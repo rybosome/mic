@@ -116,9 +116,15 @@ def test_async_trials(tmp_path: Path) -> None:
         json.loads(line)
         for line in (tmp_path / "async" / "cases.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert [(case["row_index"], case["trial"]) for case in cases] == sorted(
-        (case["row_index"], case["trial"]) for case in cases
-    )
+    # The journal records completion order, which may differ across event loops.
+    # Sorting for comparison still catches missing, duplicate, or unexpected trials.
+    assert sorted((case["row_index"], case["trial"]) for case in cases) == [
+        (row_index, trial) for row_index in range(3) for trial in (1, 2)
+    ]
+    for case in cases:
+        assert case["case_id"] == f"async-{case['row_index']}"
+        assert case["status"] == "completed"
+        assert case["output"] == case["expected"] == f"ITEM {case['row_index']}"
 
 
 @pytest.mark.parametrize(
