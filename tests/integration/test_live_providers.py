@@ -4,7 +4,7 @@ Opt in separately:
   MIC_LIVE_BIGQUERY=1 MIC_BIGQUERY_PROJECT=... MIC_BIGQUERY_LOCATION=US
   MIC_BIGQUERY_SQL='SELECT ... ORDER BY id' MIC_BIGQUERY_MAX_BYTES=1000000
 
-  MIC_LIVE_BRAINTRUST=1 MIC_BRAINTRUST_DATASET_ID=... MIC_BRAINTRUST_VERSION=...
+  MIC_LIVE_BRAINTRUST=1 MIC_BRAINTRUST_DATASET_ID=... MIC_BRAINTRUST_XACT_ID=...
   BRAINTRUST_API_KEY=... [BRAINTRUST_API_URL=...]
 
 Both fixture datasets must contain at least two rows so pagination is exercised.
@@ -57,7 +57,7 @@ async def test_live_braintrust_pinned_multi_page_repeat(record_property):
     required("BRAINTRUST_API_KEY")
     source = BraintrustHandle(
         dataset_id=required("MIC_BRAINTRUST_DATASET_ID"),
-        version=required("MIC_BRAINTRUST_VERSION"),
+        xact_id=required("MIC_BRAINTRUST_XACT_ID"),
         page_size=1,
     )
     snapshots = []

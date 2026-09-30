@@ -104,7 +104,7 @@ the same three offline cases. Set `MIC_BIGQUERY_PROJECT` and optionally
 For `examples.provider_equivalence:braintrust_fixed`, prepare an existing fixture
 whose input/expected match `examples/fixtures/triage.jsonl`. Store the logical case
 ID in `metadata.case_id` for each row. Set `MIC_BRAINTRUST_DATASET_ID` and the pinned
-`MIC_BRAINTRUST_VERSION`. The example's explicit mapper removes this transport-only
+`MIC_BRAINTRUST_XACT_ID`. The example's explicit mapper removes this transport-only
 metadata key, maps it to the case ID, and retains physical record ID in provenance.
 No fixture is created or modified by these examples. Source row ordering must also
 match when comparing snapshot digests; the same cases in a different order produce

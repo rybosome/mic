@@ -46,8 +46,8 @@ def tickets() -> list[mic.RawCase]:
     )]
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> mic.Score:
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> float:
+    return float(ctx.output == ctx.require_expected())
 
 @mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
 def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
@@ -101,7 +101,7 @@ def bigquery_tickets() -> BigQueryHandle:
 
 @mic.dataset(name="tickets.braintrust", schema=case_types)
 def braintrust_tickets() -> BraintrustHandle:
-    return BraintrustHandle(dataset_id="existing-id", version="pinned-version")
+    return BraintrustHandle(dataset_id="existing-id", xact_id="pinned-xact-id")
 ```
 
 BigQuery input/expected columns can be nested records and arrays matching the JSON

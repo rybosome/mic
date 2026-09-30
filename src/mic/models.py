@@ -1,7 +1,7 @@
 """Public authoring models, definition descriptors, and run results."""
 
 import math
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -36,7 +36,6 @@ class CaseSchema[I, E, M]:
     expected: Schema[E]
     metadata: Schema[M]
     expected_policy: Literal["required", "optional"] = "required"
-    strict: bool = True
 
 
 @dataclass(frozen=True)
@@ -68,7 +67,6 @@ class TaskContext[E, M]:
     trial: int
     expected: E | Missing
     metadata: M | None
-    model_preset: str | None = None
 
     def require_expected(self) -> E:
         if isinstance(self.expected, Missing):
@@ -93,7 +91,6 @@ class ScoreContext[I, O, E, M]:
 
 @dataclass(frozen=True)
 class Score:
-    name: str
     value: float | None
     metadata: JsonObject = field(default_factory=dict[str, JsonValue])
 
@@ -107,9 +104,8 @@ class TaskResult[O]:
 type Task[I, O, E, M] = Callable[
     [TaskContext[E, M], I], O | TaskResult[O] | Awaitable[O | TaskResult[O]]
 ]
-type Scoring[I, O, E, M] = Callable[
-    [ScoreContext[I, O, E, M]], Score | Sequence[Score] | Awaitable[Score | Sequence[Score]]
-]
+type ScoreValue = Score | float | int | None
+type Scoring[I, O, E, M] = Callable[[ScoreContext[I, O, E, M]], ScoreValue | Awaitable[ScoreValue]]
 type SourceFactory = Callable[[], object | Awaitable[object]]
 type RowMapper = Callable[[object], RawCase]
 
@@ -126,7 +122,6 @@ class Dataset[I, E, M]:
 class Scorer[I, O, E, M]:
     name: str
     function: Scoring[I, O, E, M] = field(repr=False)
-    metrics: tuple[str, ...]
     requires_expected: bool = True
 
 
@@ -139,8 +134,6 @@ class Evaluation[I, O, E, M]:
     function: Task[I, O, E, M] = field(repr=False)
     trials: int = 1
     concurrency: int = 10
-    skip: bool = False
-    model_preset: str | None = None
 
 
 @dataclass(frozen=True)

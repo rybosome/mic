@@ -104,7 +104,6 @@ async def load_dataset[I, E, M](
         "expected": describe(schema.expected, "expected"),
         "metadata": describe(schema.metadata, "metadata"),
         "expected_policy": schema.expected_policy,
-        "strict": schema.strict,
     }
     row_index = 0
     try:
@@ -120,19 +119,17 @@ async def load_dataset[I, E, M](
                                 f"Dataset exceeds max_rows={caps.max_rows}; no tasks started"
                             )
                         mapped = _mapped_case(dataset.map_row(raw))
-                        case_input = validate(schema.input, mapped.input, strict=schema.strict)
+                        case_input = validate(schema.input, mapped.input)
                         if isinstance(mapped.expected, Missing):
                             if schema.expected_policy == "required":
                                 raise ValueError("Missing required field 'expected'")
                             expected: E | Missing = mapped.expected
                         else:
-                            expected = validate(
-                                schema.expected, mapped.expected, strict=schema.strict
-                            )
+                            expected = validate(schema.expected, mapped.expected)
                         metadata = (
                             None
                             if mapped.metadata is None
-                            else validate(schema.metadata, mapped.metadata, strict=schema.strict)
+                            else validate(schema.metadata, mapped.metadata)
                         )
                         normalized: JsonObject = {"input": serialize(schema.input, case_input)}
                         if not isinstance(expected, Missing):

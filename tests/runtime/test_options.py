@@ -21,6 +21,15 @@ def test_low_score_and_explicit_gate_have_distinct_exit_codes(tmp_path):
     assert gated.manifest["gates"][0]["passed"] is False
 
 
+def test_v2_manifest_omits_removed_authoring_options(tmp_path):
+    result = mic.run(evaluation([row()]), output=tmp_path)
+    manifest = result.manifest
+    assert manifest["schema_version"] == "mic-run-v2"
+    assert "skipped" not in manifest["counts"]
+    assert "model_preset" not in manifest["options"]
+    assert "strict" not in manifest["dataset"]["schema"]
+
+
 @pytest.mark.parametrize(
     "setting,value",
     [
@@ -54,10 +63,10 @@ def test_invalid_gate_never_calls_task(tmp_path, require):
     assert not calls
 
 
-def test_duplicate_declared_metric_rejected_before_data_read(tmp_path):
+def test_duplicate_scorer_name_rejected_before_data_read(tmp_path):
     spec = evaluation([row()])
-    spec = replace(spec, scorers=(spec.scorers[0], replace(spec.scorers[0], name="other")))
-    with pytest.raises(mic.ConfigurationError, match="Duplicate metric"):
+    spec = replace(spec, scorers=(spec.scorers[0], spec.scorers[0]))
+    with pytest.raises(mic.ConfigurationError, match="Duplicate scorer"):
         mic.run(spec, output=tmp_path)
 
 
@@ -68,7 +77,7 @@ def test_empty_dataset_and_null_only_metric_do_not_pass_a_gate(tmp_path):
 
     @mic.scorer(name="maybe", requires_expected=False)
     def maybe(ctx):
-        return mic.Score("maybe", None)
+        return None
 
     result = mic.run(
         evaluation([row()], scorers=[maybe]), output=tmp_path / "null", require=["maybe>=0"]
@@ -89,17 +98,6 @@ def test_empty_dataset_and_null_only_metric_do_not_pass_a_gate(tmp_path):
 async def test_library_sync_entrypoint_gives_notebook_instruction():
     with pytest.raises(mic.ConfigurationError, match="await mic.arun"):
         mic.run(evaluation([row()]))
-
-
-def test_skip_does_not_validate_or_touch_source(tmp_path):
-    def forbidden():
-        raise AssertionError("source must not run")
-
-    spec = evaluation([row()], skip=True, trials=0)
-    spec = replace(spec, dataset=replace(spec.dataset, factory=forbidden))
-    result = mic.run(spec, output=tmp_path)
-    assert result.status == "skipped"
-    assert result.exit_code == 0
 
 
 def test_resource_caps_prevent_all_task_execution(tmp_path):

@@ -30,7 +30,7 @@ class BigQueryParameter:
     """
 
     name: str
-    type: str
+    sql_type: str
     value: JsonValue
 
 
@@ -87,7 +87,7 @@ def _config(handle: BigQueryHandle, dry_run: bool) -> object:
     sdk = _sdk()
     parameters: list[object] = []
     for param in handle.parameters:
-        type_name = param.type.upper()
+        type_name = param.sql_type.upper()
         if type_name.startswith("ARRAY<") and type_name.endswith(">"):
             parameters.append(sdk.ArrayQueryParameter(param.name, type_name[6:-1], param.value))
         else:
@@ -132,7 +132,7 @@ def _validate(handle: BigQueryHandle) -> None:
         if not parameter.name.isidentifier() or parameter.name in names:
             raise ConfigurationError("BigQuery parameters require unique identifier names")
         names.add(parameter.name)
-        type_name = parameter.type.upper()
+        type_name = parameter.sql_type.upper()
         if type_name.startswith("ARRAY<") and type_name.endswith(">"):
             if not isinstance(parameter.value, list):
                 raise ConfigurationError(
@@ -140,7 +140,7 @@ def _validate(handle: BigQueryHandle) -> None:
                 )
             type_name = type_name[6:-1]
         if type_name not in scalar_types:
-            raise ConfigurationError(f"unsupported BigQuery parameter type {parameter.type!r}")
+            raise ConfigurationError(f"unsupported BigQuery parameter type {parameter.sql_type!r}")
         try:
             json.dumps(parameter.value, allow_nan=False)
         except (ValueError, TypeError) as exc:
@@ -151,7 +151,8 @@ def _validate(handle: BigQueryHandle) -> None:
 
 def _provenance(handle: BigQueryHandle, dry_job: QueryJob) -> JsonObject:
     parameters: list[JsonValue] = [
-        {"name": p.name, "type": p.type.upper(), "value": p.value} for p in handle.parameters
+        {"name": p.name, "sql_type": p.sql_type.upper(), "value": p.value}
+        for p in handle.parameters
     ]
     identity: JsonObject = {
         "sql": handle.sql,

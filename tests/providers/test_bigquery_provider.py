@@ -71,7 +71,9 @@ async def test_dry_run_before_execution_and_parameter_provenance():
         assert [row async for row in read.rows()] == [{"input": "x", "expected": "y"}]
         assert read.provenance["job_id"] == "fixture-job"
         assert read.provenance["estimated_bytes_processed"] == 25
-        assert read.provenance["parameters"] == [{"name": "value", "type": "STRING", "value": "x"}]
+        assert read.provenance["parameters"] == [
+            {"name": "value", "sql_type": "STRING", "value": "x"}
+        ]
         digest = read.provenance["query_sha256"]
     assert not client.closed
     assert [call[1]["job_config"]["dry_run"] for call in client.calls] == [True, False]

@@ -69,7 +69,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("selector")
     _execution(run)
     run.add_argument("--output", type=Path)
-    run.add_argument("--model-preset")
     run.add_argument("--timeout", type=float, help="Cooperative per-trial timeout in seconds")
     run.add_argument("--require", action="append", default=[], metavar="METRIC>=VALUE")
     run.add_argument("--json", action="store_true", help="Print the complete final run manifest")
@@ -176,7 +175,6 @@ def _execute(args: argparse.Namespace) -> int:
         output=args.output,
         trials=args.trials,
         concurrency=args.concurrency,
-        model_preset=args.model_preset,
         timeout=args.timeout,
         require=args.require,
         limits=_read_limits(args),
