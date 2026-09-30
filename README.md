@@ -2,177 +2,232 @@
 
 [![CI](https://github.com/rybosome/mic/actions/workflows/ci.yml/badge.svg)](https://github.com/rybosome/mic/actions/workflows/ci.yml)
 
-Define typed micro-evaluations with decorators, read cases from Python data, local
-files, BigQuery or Braintrust, and review every result locally. Dataset storage
-and experiment reporting are independent. The core has **zero third-party runtime dependencies**. Standard-library dataclasses
-are the primary schema API; Pydantic and cloud SDKs are optional.
+**Did that prompt, model, or application change actually improve the answers?**
 
-mic is an early alpha. Its core execution and artifact contracts are well tested,
-but its public API may still change before a stable release. The [schema guide](docs/schemas.md),
-[provider guide](docs/providers.md), [reporting guide](docs/reporting.md), and
-[verification guide](docs/verification.md) describe the current behavior.
+Mic is a small Python evaluation harness for systems whose answers can vary.
+Give it examples, the code you want to evaluate, and a way to score the results.
+Run the evaluation repeatedly, then inspect what happened, case by case.
 
-**Try it now.** From this directory, use Python 3.12 and [uv](https://docs.astral.sh/uv/):
+Use it to test an LLM classifier, score an agent's work, or evaluate another ML
+application. You keep your application code and choose your own models and scoring
+logic; Mic handles dataset validation, bounded concurrent execution, repeated
+trials, and local evidence. No hosted evaluation platform is required.
+
+## Evaluate a support-ticket classifier
+
+Suppose you're using an LLM to sort support messages into bugs, feature requests,
+and questions. Before changing its prompt or model, give yourself a repeatable check.
+
+With Python 3.12+, install Mic and the SDK used by this example:
 
 ```console
-uv sync --frozen
-uv run mic list examples.triage
-uv run mic inspect examples.triage:triage_data --limit 3
-uv run mic preflight examples.triage:baseline
-uv run mic run examples.triage:baseline --output .mic/baseline
-uv run mic run examples.triage:fixed --output .mic/fixed
-uv run mic report .mic/baseline --open
+python -m pip install "mic-evals[pydantic]" openai
 ```
 
-The baseline scores **2/3** and the fixed version **3/3**. Both execute successfully;
-the baseline's first case shows `expected="bug"`, `output="question"`, and score 0.
-Run directories must be empty so old evidence is never overwritten. Omit `--output`
-to create a unique directory automatically.
+Mic's core has no third-party runtime dependencies. This example opts into Pydantic
+and the OpenAI SDK to share a typed output contract between Mic and the model call.
+It uses [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+with [GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini);
+replace the classifier function with your own model or application call.
+Set `OPENAI_API_KEY` in your environment using your usual secret-management method.
+Running it sends the example messages to OpenAI and incurs normal API charges.
 
-The generated HTML report is self-contained and works without a server or network.
-
-**Define complex cases with ordinary dataclasses.** Inputs, expected values, outputs,
-and metadata can all be nested objects. No base class or mic field decorator is needed.
+Save this complete example as `ticket_eval.py`:
 
 ```python
-from dataclasses import dataclass, field
+from typing import Literal
+
+from pydantic import BaseModel
+
 import mic
 
 
-@dataclass(frozen=True)
-class Message:
-    role: str
-    text: str
+class Ticket(BaseModel):
+    subject: str
+    body: str
 
 
-@dataclass
-class Ticket:
-    messages: list[Message]
-    context: dict[str, list[str]] = field(default_factory=dict)
+class Classification(BaseModel):
+    label: Literal["bug", "feature", "question"]
 
 
-@dataclass
-class Decision:
-    label: str
-    evidence: dict[str, list[int]] = field(default_factory=dict)
+def classify_ticket(ticket: Ticket) -> Classification:
+    from openai import OpenAI
+
+    # Create the client only when the task runs, and close it after the call.
+    with OpenAI(timeout=30, max_retries=0) as client:
+        response = client.responses.parse(
+            model="gpt-4.1-mini",
+            instructions=(
+                "Classify the support ticket as "
+                "bug (broken behavior), feature (new capability), or question (how-to)."
+            ),
+            input=ticket.model_dump_json(),
+            text_format=Classification,
+            store=False,
+        )
+        if response.output_parsed is None:
+            raise ValueError("The model did not return a classification.")
+        return response.output_parsed
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Decision))
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
 def tickets() -> list[mic.RawCase]:
     return [
         mic.RawCase(
-            id="crash",
-            input=Ticket([Message("user", "It crashes on startup")]),
-            expected=Decision("bug", {"messages": [0]}),
-        )
+            id="upload",
+            input=Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
+            expected=Classification(label="bug"),
+        ),
+        mic.RawCase(
+            id="export",
+            input=Ticket(
+                subject="Invoice export", body="Can you add an option to export invoices?"
+            ),
+            expected=Classification(label="feature"),
+        ),
+        mic.RawCase(
+            id="invoice",
+            input=Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
+            expected=Classification(label="question"),
+        ),
     ]
 
 
-@mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> float:
-    return float(ctx.output == ctx.require_expected())
+@mic.scorer(name="accuracy", requires_expected=True)
+def accuracy(
+    ctx: mic.ScoreContext[Ticket, Classification, Classification, mic.JsonObject],
+) -> float:
+    return float(ctx.output.label == ctx.require_expected().label)
 
 
-@mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
-def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
-    for index, message in enumerate(ticket.messages):
-        if "crash" in message.text.lower():
-            return Decision("bug", {"messages": [index]})
-    return Decision("question")
+@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+def classify(
+    ctx: mic.TaskContext[Classification, mic.JsonObject], ticket: Ticket
+) -> Classification:
+    return classify_ticket(ticket)
 ```
 
-Save this as `my_evals.py`, then run `uv run --no-dev mic run my_evals:classify`.
-Provider JSON objects hydrate the same `Ticket`, nested `Message`, and `Decision`
-instances. The runner validates task outputs and isolates nested mutable values
-between trials and scorers. `run()` works in scripts; notebooks use `await arun()`.
+`Ticket` gives the task typed inputs; `Classification` defines both the expected
+answer and the model's structured output. The SDK derives its output schema from
+that class and parses the response into it. Mic validates dataset values and task
+outputs against the same types, so the scorer works with objects, not JSON parsing
+or string cleanup.
 
-The complete [structured example](examples/structured.py) includes native and JSONL
-sources, typed metadata, nullable fields, and two scoring metrics:
+A valid but wrong label scores `0`; the right label scores `1`. Invalid output or
+no parsed classification (for example, a refusal) is an execution failure, not a
+wrong answer. These three cases are illustrative; a useful evaluation needs a
+larger, representative set of labeled tickets.
+
+Run it from the directory containing `ticket_eval.py`, then open the report:
 
 ```console
-uv run --no-dev mic inspect examples.structured:tickets --limit 2
-uv run --no-dev mic preflight examples.structured:classify
-uv run --no-dev mic run examples.structured:classify --trials 3
-uv run --no-dev mic run examples.structured:classify_file --trials 3
+mic run ticket_eval:classify --output .mic/tickets-first
+mic report .mic/tickets-first --open
 ```
 
-These commands do not install development or optional dependencies. For richer
-constraints/aliases, explicitly use `pydantic_schema(MyModel)` from
-`mic.integrations.pydantic` and `uv run --extra pydantic ...`. Existing BaseModel
-classes are also adapted lazily when passed directly. Ordinary dataclasses always
-use the native backend; Pydantic `Annotated` metadata needs the optional adapter.
-See [schemas](docs/schemas.md) for the complete support table and boundary semantics.
+That's three classifier calls. The report shows each message, its expected label,
+the actual response, and its score, alongside aggregate accuracy and execution
+failures. Review low-scoring cases for wrong answers or ambiguous expected labels,
+and execution failures for calls that did not produce a valid classification.
 
-**Use a provider.** Return a passive handle from the dataset factory:
+Each run saves its dataset snapshot, per-trial results, and summary as JSON/JSONL,
+plus a self-contained HTML report you can open without a server or network.
+Explicit output directories must be empty; omit `--output` to get a unique directory
+automatically. A successfully executed run can still have poor scores—execution
+success and answer quality are separate.
+
+The same code lives in [examples/ticket_eval.py](examples/ticket_eval.py). To explore
+the report without credentials or API charges, the repository also includes an
+[offline classification demo](examples/triage.py) with deliberately imperfect rules;
+see the [walkthrough](docs/verification.md).
+
+## Repeat, check, improve
+
+### Look for variation
+
+Run each message five times, with at most two tasks executing concurrently:
+
+```console
+mic run ticket_eval:classify --trials 5 --concurrency 2 --output .mic/tickets-repeat
+```
+
+This makes 15 classifier calls. Inspect individual trials as well as the mean:
+one message that fails intermittently deserves attention even if the average looks
+good. Repetition gives you more observations, not proof of statistical significance.
+
+Change the prompt or model in `classify_ticket`, run again into a fresh directory,
+and review both reports against the same labeled cases. Keep the evaluation set
+representative rather than tuning only to these three examples.
+
+### Make quality a check
+
+Add a score requirement when you're ready to use the evaluation locally or in CI:
+
+```console
+mic run ticket_eval:classify --trials 5 --require 'accuracy>=0.9'
+```
+
+The command exits nonzero if execution fails or mean accuracy falls below `0.9`.
+That threshold is illustrative; choose one appropriate to your dataset and the cost
+of a wrong answer. A failed quality gate still leaves local results to investigate.
+
+### Grow the dataset without changing the task
+
+Save the same cases as `tickets.jsonl` beside `ticket_eval.py`:
+
+```jsonl
+{"id":"upload","input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
+{"id":"export","input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
+{"id":"invoice","input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
+```
+
+Replace the `tickets` definition with this, adding the two imports:
 
 ```python
 from pathlib import Path
+
 from mic.providers.files import FileHandle
-from mic.providers.bigquery import BigQueryHandle
-from mic.providers.braintrust import BraintrustHandle
 
-FileHandle(Path("fixtures/cases.jsonl"))
-BigQueryHandle(
-    billing_project="my-project",
-    location="US",
-    sql="SELECT id, input, expected FROM `my-project.evals.cases` ORDER BY id",
-    maximum_bytes_billed=100_000_000,
-)
-BraintrustHandle(dataset_id="existing-id", xact_id="pinned-xact-id")
+
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+def tickets() -> FileHandle:
+    return FileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
-Install cloud extras with `uv sync --frozen --all-extras`. BigQuery uses Application
-Default Credentials. Braintrust source reads use `BRAINTRUST_API_KEY` and an existing
-dataset at an explicit version. The source adapters do not create datasets.
-`mic estimate module:dataset` performs a BigQuery dry run without retrieving rows.
-See [provider contracts and examples](docs/providers.md) for parameters, custom
-providers, read limits, pagination, and opt-in live tests.
+Mic hydrates the JSON objects into `Ticket` and `Classification` instances and
+rejects invalid cases before calling the model. The task, scorer, and run command
+stay the same. Add cases from real failures as
+you encounter them—for example, a message that sounds like a feature request but
+describes an existing feature that stopped working.
 
-Every run writes local evidence. To additionally create a Braintrust experiment:
+## Bring your own application
 
-```console
-uv run mic run examples.triage:fixed --braintrust-project my-eval-project
-```
+The same pattern applies beyond classification: score extracted fields, check an
+agent's result against a rubric, or compute a metric for an ML prediction. Tasks
+and scorers are Python functions, so they can call your existing code. Sync and
+async functions are supported; scripts can use `mic.run()` and notebooks can use
+`await mic.arun()` instead of the CLI.
 
-This is an explicit remote write. Numeric Braintrust scores must be in `[0,1]`;
-local scores may be any finite numbers. Read [reporting](docs/reporting.md) for
-upload failure handling, exact null representation, and the pinned SDK boundary.
+- **Structured data:** use ordinary dataclasses for inputs, outputs, and expected
+  values; see the [structured example](examples/structured.py) and [schema guide](docs/schemas.md).
+- **Other dataset sources:** load local files, BigQuery queries, or versioned
+  Braintrust datasets with optional integrations; see [providers](docs/providers.md).
+- **Remote reporting:** optionally export results to a Braintrust experiment after
+  saving local evidence. Dataset storage and reporting are independent; see [reporting](docs/reporting.md).
 
-**Interpret a run.** Execution outcomes and score quality are separate:
+## Before you use it
 
-| Exit | Meaning |
-| --- | --- |
-| 0 | Execution succeeded and any explicit quality gates passed |
-| 1 | A task/schema/scorer, artifact write, quality gate, or export failed |
-| 2 | Invalid configuration or dataset preflight failure |
-| 130 | Interrupted; partial local evidence retained where writable |
+Mic is an early release, and its public API may change before a stable release.
+It runs finite, bounded datasets locally—not distributed jobs or an application
+hosting service. Synchronous callbacks must finish cooperatively: a timeout cannot
+forcibly stop a running Python thread.
 
-```console
-uv run mic run examples.triage:baseline --require 'exact>=0.9'
-uv run mic run examples.async_eval:uppercase --trials 3 --concurrency 2
-```
+Reports and artifacts contain your actual evaluation data, including inputs and
+outputs. They are **not automatically redacted**. Treat them as sensitive, keep
+credentials out of your cases, and review evidence before sharing or committing it.
+Your model calls and optional cloud integrations have their own costs and data-handling
+policies. See [artifact handling](docs/artifacts.md) for details.
 
-The quoted gate compares the named numeric mean with its threshold. Null scores
-do not become zero. Reports show numeric, unscored, and unavailable counts.
-**Verify the package.**
-
-```console
-uv sync --frozen --all-extras
-npm ci --ignore-scripts --prefix tests/reporting/js
-uv run python scripts/verify.py
-```
-
-This runs tests, strict typing (including deliberately invalid authoring
-examples), lint, formatting, branch coverage, report JavaScript syntax and DOM
-interaction tests, and writes generated results under `.artifacts/verification/`.
-Node 18+ and jsdom are development tools only; reports and the Python core need neither. Cloud tests require an explicit
-opt-in and named fixture configuration; skipped live tests are not evidence of
-remote correctness. The [verification guide](docs/verification.md) includes a short
-human walkthrough and optional original-TypeScript reproduction.
-
-The supported initial runtime is Python 3.12. Synchronous callbacks run in bounded
-worker threads and must finish cooperatively; a timeout cannot kill Python threads.
-The MVP materializes a finite validated snapshot before any task executes. Defaults
-cap source rows, serialized bytes, record bytes, and row/trial executions. It does
-not provide distributed execution, resume, unlimited streaming runs, automatic task
-retries, dataset mutation, or a hosted UI.
+[API reference](docs/api.md) · [Verification](docs/verification.md) ·
+[Contributing](CONTRIBUTING.md) · [Releasing](docs/releasing.md) · [MIT license](LICENSE)
