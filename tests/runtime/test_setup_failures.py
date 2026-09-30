@@ -26,7 +26,7 @@ def test_broken_schema_description_fails_before_source_access(tmp_path, componen
 
     spec = evaluation([row()])
     spec = replace(
-        spec, dataset=replace(spec.dataset, __wrapped__=lambda: calls.append("source") or [row()])
+        spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source") or [row()])
     )
     if component == "input":
         spec = replace(
@@ -49,8 +49,8 @@ def test_noncallable_scorer_fails_before_source_access(tmp_path):
     spec = evaluation([row()])
     spec = replace(
         spec,
-        dataset=replace(spec.dataset, __wrapped__=lambda: calls.append("source") or [row()]),
-        scorers=(replace(spec.scorers[0], __wrapped__=None),),
+        dataset=replace(spec.dataset, factory=lambda: calls.append("source") or [row()]),
+        scorers=(replace(spec.scorers[0], function=None),),
     )
     with pytest.raises(mic.ConfigurationError, match="scorer.*callable"):
         mic.run(spec, output=tmp_path)
@@ -68,7 +68,7 @@ def test_dataset_snapshot_write_failure_saves_failed_manifest_without_tasks(tmp_
         snapshot.mkdir()
         return [row()]
 
-    spec = replace(spec, dataset=replace(spec.dataset, __wrapped__=source))
+    spec = replace(spec, dataset=replace(spec.dataset, factory=source))
     result = mic.run(spec, output=tmp_path)
     assert calls == []
     assert result.exit_code == 1

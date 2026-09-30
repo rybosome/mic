@@ -10,9 +10,9 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
+from mic._runtime.validation import json_object, loads
 from mic.errors import ConfigurationError
 from mic.models import JsonObject
-from mic.validation import json_object, loads
 
 _TEMPLATES = Path(__file__).parent / "templates"
 

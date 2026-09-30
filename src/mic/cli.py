@@ -10,14 +10,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import mic
-from mic.datasets import resolve_source
-from mic.discovery import list_definitions, resolve_definition
+from mic._runtime.discovery import list_definitions, resolve_definition
+from mic._runtime.materialization import resolve_source
 from mic.errors import ConfigurationError, DatasetError, MicError
 from mic.models import JsonObject
+from mic.providers import Resolver
 from mic.reporters.braintrust import BraintrustReporter
 from mic.reporters.console import format_summary
 from mic.reporters.html import write_report
-from mic.resolver import default_resolver
 
 
 def _limits(parser: argparse.ArgumentParser) -> None:
@@ -116,7 +116,7 @@ async def _estimate[I, E, M](dataset: mic.Dataset[I, E, M], timeout: float) -> J
     try:
         async with asyncio.timeout(timeout):
             source = await resolve_source(dataset)
-            estimate = await default_resolver().estimate(source)
+            estimate = await Resolver.with_builtin_loaders().estimate(source)
         return {"dataset": dataset.name, "estimate": estimate, "rows_read": 0, "tasks_executed": 0}
     except TimeoutError as exc:
         raise DatasetError(f"Provider estimate exceeded {timeout} seconds") from exc
@@ -145,7 +145,7 @@ def _execute(args: argparse.Namespace) -> int:
         return 0
     definition = resolve_definition(args.selector)
     if args.command in ("inspect", "estimate"):
-        dataset = definition.dataset if isinstance(definition, mic.EvalSpec) else definition
+        dataset = definition.dataset if isinstance(definition, mic.Evaluation) else definition
         if not isinstance(dataset, mic.Dataset):
             raise ConfigurationError(f"{args.command} requires a dataset or evaluation definition")
         if args.command == "estimate":
@@ -155,7 +155,7 @@ def _execute(args: argparse.Namespace) -> int:
             asyncio.run(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
         )
         return 0
-    if not isinstance(definition, mic.EvalSpec):
+    if not isinstance(definition, mic.Evaluation):
         raise ConfigurationError(f"{args.command} requires an evaluation definition")
     reporters = _reporters(args)
     if args.command == "preflight":

@@ -32,8 +32,8 @@ Rows normally contain `input`, optional `expected`, optional object-shaped
 `metadata`, and optional string `id`. Missing `expected` is distinct from an
 explicit JSON `null`. Dataset schemas require expected values unless configured
 with `expected_policy="optional"`. Custom mappers return `RawCase` and can map
-arbitrary source columns to that envelope. `legacy_json_columns` decodes the
-original `input_json`, `expected_json`, and `metadata_json` column layout.
+arbitrary source columns to that envelope. Decode source-specific JSON string
+columns explicitly in that mapper so normalization remains visible in the definition.
 
 Explicit IDs are preserved and duplicates fail loading. Default IDs for cases
 without an explicit ID derive from normalized case content and position. Snapshot

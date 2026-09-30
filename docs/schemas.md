@@ -106,7 +106,7 @@ def braintrust_tickets() -> BraintrustHandle:
 
 BigQuery input/expected columns can be nested records and arrays matching the JSON
 shape. For different source columns, supply `map_row=...` returning `mic.RawCase`;
-`mic.legacy_json_columns` explicitly decodes `input_json`/`expected_json` strings.
+decode source-specific JSON string columns explicitly in that mapper.
 Use the desired factory in `@mic.eval(dataset=...)`. Each handle remains passive
 until selected; see [provider contracts](providers.md) for actual configuration.
 

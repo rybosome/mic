@@ -7,12 +7,12 @@ from collections.abc import Callable, Sequence
 from typing import cast
 
 from ..errors import ConfigurationError
-from ..models import EvalSpec, JsonObject, JsonValue
-from ..validation import json_object, numeric_stats
+from ..models import Evaluation, JsonObject, JsonValue
+from .validation import json_object, numeric_stats
 
 
 def summarize[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     manifest: JsonObject,
     cases: Sequence[JsonObject],
     planned: int,
@@ -72,7 +72,7 @@ _COMPARATORS: dict[str, Callable[[float, float], bool]] = {
 
 
 def parse_gates[I, O, E, M](
-    spec: EvalSpec[I, O, E, M], expressions: Sequence[str]
+    spec: Evaluation[I, O, E, M], expressions: Sequence[str]
 ) -> list[tuple[str, str, str, float]]:
     allowed = {metric for scorer in spec.scorers for metric in scorer.metrics}
     parsed: list[tuple[str, str, str, float]] = []

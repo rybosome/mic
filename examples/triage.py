@@ -43,6 +43,10 @@ def baseline(context: TaskContext[str, Meta], text: str) -> str:
     concurrency=4,
 )
 def fixed(context: TaskContext[str, Meta], text: str) -> str:
+    return classify_fixed(text)
+
+
+def classify_fixed(text: str) -> str:
     text = text.lower()
     if "bug" in text or "crashes" in text:
         return "bug"

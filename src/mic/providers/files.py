@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
 
@@ -18,7 +18,6 @@ from ._io import ReadBudget, in_thread, parse_json
 class FileHandle:
     path: Path | str
     format: Literal["json", "jsonl"] | None = None
-    provider: Literal["file"] = field(default="file", init=False)
 
 
 @dataclass

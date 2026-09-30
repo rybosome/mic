@@ -1,7 +1,7 @@
 import pytest
 
 import mic
-from mic.validation import normalize_scores, numeric_stats
+from mic._runtime.validation import normalize_scores, numeric_stats
 
 
 @pytest.mark.parametrize(

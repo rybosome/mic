@@ -1,20 +1,47 @@
-"""Explicit handle-to-loader dispatch. The runner knows no provider types."""
+"""Public contracts for custom dataset providers and resolver composition."""
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
-from typing import cast
+from typing import Protocol, cast
 
-from .errors import ConfigurationError
-from .models import DatasetLoader, DatasetRead, JsonObject, ReadLimits
-from .validation import json_object
+from .._runtime.validation import json_object
+from ..errors import ConfigurationError
+from ..models import JsonObject, ReadLimits
 
-type OpenSource = Callable[[object, ReadLimits], AbstractAsyncContextManager[DatasetRead]]
+
+class DatasetRead(Protocol):
+    @property
+    def provenance(self) -> JsonObject: ...
+
+    def rows(self) -> AsyncIterator[object]: ...
+
+
+class DatasetLoader[H](Protocol):
+    def open(
+        self, handle: H, *, limits: ReadLimits
+    ) -> AbstractAsyncContextManager[DatasetRead]: ...
+
+
+type _OpenSource = Callable[[object, ReadLimits], AbstractAsyncContextManager[DatasetRead]]
 
 
 class Resolver:
     def __init__(self) -> None:
-        self._loaders: dict[type[object], OpenSource] = {}
+        self._loaders: dict[type[object], _OpenSource] = {}
         self._estimates: dict[type[object], Callable[[object], Awaitable[JsonObject]]] = {}
+
+    @classmethod
+    def with_builtin_loaders(cls) -> "Resolver":
+        """Create a resolver with Mic's file and optional cloud handles registered."""
+        from .bigquery import BigQueryHandle, BigQueryLoader
+        from .braintrust import BraintrustHandle, BraintrustLoader
+        from .files import FileHandle, FileLoader
+
+        resolver = cls()
+        resolver.register(FileHandle, FileLoader())
+        resolver.register(BigQueryHandle, BigQueryLoader())
+        resolver.register(BraintrustHandle, BraintrustLoader())
+        return resolver
 
     def register[H](self, handle_type: type[H], loader: DatasetLoader[H]) -> None:
         if handle_type in self._loaders:
@@ -67,22 +94,9 @@ class Resolver:
                 "A dataset source must be a handle or iterable of rows, not a string/bytes/dict"
             )
         if isinstance(source, (Iterable, AsyncIterable)):
-            from .providers.memory import MemoryLoader
+            from .memory import MemoryLoader
 
             return MemoryLoader().open(
                 cast(Iterable[object] | AsyncIterable[object], source), limits=limits
             )
         raise ConfigurationError(f"No dataset loader registered for {type(source).__name__}")
-
-
-def default_resolver() -> Resolver:
-    # These modules must not import provider SDKs at module scope.
-    from .providers.bigquery import BigQueryHandle, BigQueryLoader
-    from .providers.braintrust import BraintrustHandle, BraintrustLoader
-    from .providers.files import FileHandle, FileLoader
-
-    resolver = Resolver()
-    resolver.register(FileHandle, FileLoader())
-    resolver.register(BigQueryHandle, BigQueryLoader())
-    resolver.register(BraintrustHandle, BraintrustLoader())
-    return resolver

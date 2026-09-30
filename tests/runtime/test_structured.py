@@ -16,7 +16,7 @@ from examples.structured import (
     classify_file,
     tickets,
 )
-from mic.datasets import load_dataset
+from mic._runtime.materialization import load_dataset
 
 
 def test_native_and_file_complex_cases_match_with_validated_output_and_metadata(tmp_path):

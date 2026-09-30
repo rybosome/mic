@@ -1,7 +1,6 @@
 """Independent checks at the source-to-validated-snapshot boundary."""
 
 import asyncio
-import json
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -12,13 +11,13 @@ import httpx
 import pytest
 from pydantic import BaseModel, Field
 
-from mic.datasets import legacy_json_columns, load_dataset
+from mic._runtime.materialization import load_dataset
 from mic.decorators import case_schema, dataset
 from mic.errors import ConfigurationError, DatasetError
 from mic.integrations.pydantic import pydantic_schema
 from mic.models import MISSING, RawCase, ReadLimits
+from mic.providers import Resolver
 from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
-from mic.resolver import Resolver
 
 
 def definition(source, *, input=str, expected=str, expected_policy="required", map_row=None):
@@ -184,23 +183,27 @@ async def test_dataclass_and_typed_dict_hydrate_from_json_without_coercing_primi
 
 
 @pytest.mark.asyncio
-async def test_custom_mapper_and_legacy_columns_preserve_absent_null_and_provenance():
+async def test_custom_mapper_preserves_absent_null_and_provenance():
     source = [
-        {"id": "missing", "input_json": json.dumps([1]), "provenance": {"row": 1}},
-        {
-            "id": "null",
-            "input_json": json.dumps([2]),
-            "expected_json": "null",
-            "provenance": {"row": 2},
-        },
+        {"id": "missing", "payload": [1], "provenance": {"row": 1}},
+        {"id": "null", "payload": [2], "label": None, "provenance": {"row": 2}},
     ]
+
+    def map_optional(row):
+        return RawCase(
+            id=row["id"],
+            input=row["payload"],
+            expected=row.get("label", MISSING),
+            provenance=row["provenance"],
+        )
+
     snapshot = await load_dataset(
         definition(
             source,
             input=list[int],
             expected=str | None,
             expected_policy="optional",
-            map_row=legacy_json_columns,
+            map_row=map_optional,
         )
     )
     assert snapshot.cases[0].expected == MISSING

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 from .models import (
     CaseSchema,
     Dataset,
-    EvalSpec,
+    Evaluation,
     JsonObject,
     JsonValue,
     RowMapper,
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from typing_extensions import TypeForm
 
 
-def adapter[T](annotation: TypeForm[T] | Schema[T]) -> Schema[T]:
+def _schema_for[T](annotation: TypeForm[T] | Schema[T]) -> Schema[T]:
     if not isinstance(annotation, type) and all(
         callable(getattr(annotation, name, None)) for name in ("validate", "dump", "json_schema")
     ):
@@ -71,13 +71,15 @@ def case_schema[I, E, M](
 ) -> CaseSchema[I, E, M] | CaseSchema[I, E, JsonObject]:
     if metadata is None:
         return CaseSchema(
-            adapter(input),
-            adapter(expected),
+            _schema_for(input),
+            _schema_for(expected),
             native_schema(dict[str, JsonValue]),
             expected_policy,
             strict,
         )
-    return CaseSchema(adapter(input), adapter(expected), adapter(metadata), expected_policy, strict)
+    return CaseSchema(
+        _schema_for(input), _schema_for(expected), _schema_for(metadata), expected_policy, strict
+    )
 
 
 def dataset[I, E, M](
@@ -86,15 +88,15 @@ def dataset[I, E, M](
     schema: CaseSchema[I, E, M],
     map_row: RowMapper | None = None,
 ) -> Callable[[SourceFactory], Dataset[I, E, M]]:
-    from .datasets import envelope
+    from ._runtime.materialization import map_envelope
 
     def decorate(factory: SourceFactory) -> Dataset[I, E, M]:
-        return Dataset(name, schema, factory, map_row if map_row is not None else envelope)
+        return Dataset(name, schema, factory, map_row if map_row is not None else map_envelope)
 
     return decorate
 
 
-class ScorerDecorator(Protocol):
+class _ScorerDecorator(Protocol):
     def __call__[I, O, E, M](self, fn: Scoring[I, O, E, M]) -> Scorer[I, O, E, M]: ...
 
 
@@ -103,7 +105,7 @@ def scorer(
     name: str,
     requires_expected: bool = True,
     metrics: tuple[str, ...] | None = None,
-) -> ScorerDecorator:
+) -> _ScorerDecorator:
     def decorate[I, O, E, M](fn: Scoring[I, O, E, M]) -> Scorer[I, O, E, M]:
         return Scorer(name, fn, metrics if metrics is not None else (name,), requires_expected)
 
@@ -120,12 +122,12 @@ def eval[I, O, E, M](
     concurrency: int = 10,
     skip: bool = False,
     model_preset: str | None = None,
-) -> Callable[[Task[I, O, E, M]], EvalSpec[I, O, E, M]]:
-    def decorate(fn: Task[I, O, E, M]) -> EvalSpec[I, O, E, M]:
-        return EvalSpec(
+) -> Callable[[Task[I, O, E, M]], Evaluation[I, O, E, M]]:
+    def decorate(fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
+        return Evaluation(
             name,
             dataset,
-            adapter(output),
+            _schema_for(output),
             tuple(scorers),
             fn,
             trials,

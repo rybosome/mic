@@ -9,7 +9,7 @@ import pytest
 
 import mic
 import mic.cli as cli
-from mic.discovery import list_definitions, resolve_definition
+from mic._runtime.discovery import list_definitions, resolve_definition
 from mic.errors import ConfigurationError
 
 

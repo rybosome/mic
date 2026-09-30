@@ -6,10 +6,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from ..artifacts import failure, finish_artifacts
 from ..errors import ConfigurationError
-from ..models import JsonObject, JsonValue, Reporter
-from ..validation import json_object, nonempty
+from ..models import JsonObject, JsonValue
+from ..reporters.base import Reporter
+from .artifacts import failure, finish_artifacts
+from .validation import json_object, nonempty
 
 
 async def prepare_reporters(reporters: Sequence[Reporter]) -> None:

@@ -7,15 +7,15 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from ._async import drain
-from .errors import ConfigurationError, DatasetError
-from .models import MISSING, Case, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
-from .resolver import Resolver, default_resolver
+from .._async import drain
+from ..errors import ConfigurationError, DatasetError
+from ..models import MISSING, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
+from ..providers.base import Resolver
+from .contracts import Case
 from .validation import (
     describe,
     dumps,
     json_object,
-    loads,
     nonempty,
     positive_integer,
     serialize,
@@ -23,7 +23,7 @@ from .validation import (
 )
 
 
-def envelope(row: object) -> RawCase:
+def map_envelope(row: object) -> RawCase:
     if isinstance(row, RawCase):
         return row
     if not isinstance(row, Mapping):
@@ -43,31 +43,6 @@ def envelope(row: object) -> RawCase:
     )
 
 
-def legacy_json_columns(row: object) -> RawCase:
-    """Map legacy mic BigQuery *_json fields without requiring object-shaped input."""
-    if not isinstance(row, Mapping):
-        raise TypeError("Legacy BigQuery row must be a mapping")
-    value = cast(Mapping[str, object], row)
-    mapped: dict[str, object] = {}
-    for original, target in (
-        ("input_json", "input"),
-        ("expected_json", "expected"),
-        ("metadata_json", "metadata"),
-    ):
-        if original not in value:
-            continue
-        raw = value[original]
-        try:
-            mapped[target] = loads(raw) if isinstance(raw, (str, bytes)) else raw
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"Invalid JSON in {original}: {exc}") from exc
-    if "id" in value:
-        mapped["id"] = value["id"]
-    if "provenance" in value:
-        mapped["provenance"] = value["provenance"]
-    return envelope(mapped)
-
-
 @dataclass(frozen=True)
 class DatasetSnapshot[I, E, M]:
     cases: list[Case[I, E, M]]
@@ -76,7 +51,7 @@ class DatasetSnapshot[I, E, M]:
 
 
 async def resolve_source[I, E, M](dataset: Dataset[I, E, M]) -> object:
-    factory = dataset.__wrapped__
+    factory = dataset.factory
     if inspect.iscoroutinefunction(factory):
         return await cast(Awaitable[object], factory())
     pending = asyncio.create_task(asyncio.to_thread(factory))
@@ -117,7 +92,7 @@ async def load_dataset[I, E, M](
     if limit is not None:
         positive_integer("limit", limit)
     caps = limits or ReadLimits()
-    registry = resolver or default_resolver()
+    registry = resolver or Resolver.with_builtin_loaders()
     cases: list[Case[I, E, M]] = []
     rows: list[JsonObject] = []
     ids: set[str] = set()

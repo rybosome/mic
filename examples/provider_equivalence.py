@@ -9,7 +9,7 @@ No cloud request or environment lookup happens until the selected factory is inv
 import os
 
 import mic
-from examples.triage import exact, fixed
+from examples.triage import classify_fixed, exact
 from mic import JsonObject, RawCase, TaskContext
 from mic.errors import DatasetError
 from mic.providers.bigquery import BigQueryHandle
@@ -61,13 +61,9 @@ def braintrust_data() -> BraintrustHandle:
 
 @mic.eval(name="triage.bigquery.fixed", dataset=bigquery_data, output=str, scorers=[exact])
 def bigquery_fixed(context: TaskContext[str, JsonObject], text: str) -> str:
-    value = fixed.__wrapped__(context, text)
-    assert isinstance(value, str)
-    return value
+    return classify_fixed(text)
 
 
 @mic.eval(name="triage.braintrust.fixed", dataset=braintrust_data, output=str, scorers=[exact])
 def braintrust_fixed(context: TaskContext[str, JsonObject], text: str) -> str:
-    value = fixed.__wrapped__(context, text)
-    assert isinstance(value, str)
-    return value
+    return classify_fixed(text)

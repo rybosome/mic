@@ -4,10 +4,10 @@ import math
 import os
 from dataclasses import dataclass
 
-from ..datasets import DatasetSnapshot
 from ..errors import ConfigurationError, DatasetError
-from ..models import EvalSpec, JsonObject, Missing
-from ..validation import nonempty, positive_integer
+from ..models import Evaluation, JsonObject, Missing
+from .materialization import DatasetSnapshot
+from .validation import nonempty, positive_integer
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ class Options:
 
 
 def resolve_options[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     *,
     trials: int | None,
     concurrency: int | None,
@@ -38,13 +38,13 @@ def resolve_options[I, O, E, M](
     max_executions: int,
 ) -> Options:
     nonempty("evaluation name", spec.name)
-    for name, fn in (("task", spec.__wrapped__), ("dataset factory", spec.dataset.__wrapped__)):
+    for name, fn in (("task", spec.function), ("dataset factory", spec.dataset.factory)):
         if not callable(fn):
             raise ConfigurationError(f"{name} must be callable")
     metric_names: set[str] = set()
     scorer_names: set[str] = set()
     for scorer in spec.scorers:
-        if not callable(scorer.__wrapped__):
+        if not callable(scorer.function):
             raise ConfigurationError(f"scorer {scorer.name!r} must be callable")
         scorer_name = nonempty("scorer name", scorer.name)
         if scorer_name in scorer_names:
@@ -75,7 +75,7 @@ def resolve_options[I, O, E, M](
 
 
 def check_cases[I, O, E, M](
-    spec: EvalSpec[I, O, E, M],
+    spec: Evaluation[I, O, E, M],
     snapshot: DatasetSnapshot[I, E, M],
     options: Options,
 ) -> None:

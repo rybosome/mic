@@ -1,23 +1,18 @@
 """Typed micro-evaluations. Cloud SDKs and credentials are loaded only on demand."""
 
-from .datasets import envelope, inspect_dataset, legacy_json_columns
+from ._runtime.materialization import inspect_dataset
 from .decorators import case_schema, dataset, eval, scorer
 from .errors import ConfigurationError, DatasetError, MicError, MissingExpectedError
 from .models import (
     MISSING,
-    Case,
     CaseSchema,
     Dataset,
-    DatasetHandle,
-    DatasetLoader,
-    DatasetRead,
-    EvalSpec,
+    Evaluation,
     JsonObject,
     JsonValue,
     Missing,
     RawCase,
     ReadLimits,
-    Reporter,
     RunResult,
     Score,
     ScoreContext,
@@ -25,21 +20,16 @@ from .models import (
     TaskContext,
     TaskResult,
 )
-from .resolver import Resolver, default_resolver
 from .runner import arun, preflight, run
 from .schema import Schema, SchemaError, schema
 
 __all__ = [
     "MISSING",
-    "Case",
     "CaseSchema",
     "ConfigurationError",
     "Dataset",
     "DatasetError",
-    "DatasetHandle",
-    "DatasetLoader",
-    "DatasetRead",
-    "EvalSpec",
+    "Evaluation",
     "JsonObject",
     "JsonValue",
     "MicError",
@@ -47,8 +37,6 @@ __all__ = [
     "MissingExpectedError",
     "RawCase",
     "ReadLimits",
-    "Reporter",
-    "Resolver",
     "RunResult",
     "Schema",
     "SchemaError",
@@ -61,11 +49,8 @@ __all__ = [
     "arun",
     "case_schema",
     "dataset",
-    "default_resolver",
-    "envelope",
     "eval",
     "inspect_dataset",
-    "legacy_json_columns",
     "preflight",
     "run",
     "scorer",
