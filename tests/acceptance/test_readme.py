@@ -35,9 +35,9 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     sdk.OpenAI = constructor
     monkeypatch.setitem(sys.modules, "openai", sdk)
     client = constructor.return_value.__enter__.return_value
-    labels = {row["input"]: row["expected"] for row in map(json.loads, JSONL.splitlines())}
-    client.responses.create.side_effect = lambda **kwargs: SimpleNamespace(
-        output_text=f" {labels[kwargs['input']]}\n"
+    labels = {row["input"]["body"]: row["expected"] for row in map(json.loads, JSONL.splitlines())}
+    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
+        output_parsed=kwargs["text_format"](**labels[json.loads(kwargs["input"])["body"]])
     )
     module = ModuleType("ticket_eval")
     module.__file__ = str(tmp_path / "ticket_eval.py")
@@ -47,7 +47,7 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch) -> None:
-    _, constructor, client = quickstart
+    module, constructor, client = quickstart
     opened = MagicMock(return_value=True)
     monkeypatch.setattr("webbrowser.open", opened)
     commands = [
@@ -58,11 +58,13 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     ]
     for command in commands:
         assert main(shlex.split(command)[1:]) == 0, command
-    assert client.responses.create.call_count == 33  # 3 + 15 + 15; report makes no calls.
+    assert client.responses.parse.call_count == 33  # 3 + 15 + 15; report makes no calls.
     assert constructor.call_count == 33
     assert constructor.return_value.__exit__.call_count == 33
     constructor.assert_called_with(timeout=30, max_retries=0)
-    request = client.responses.create.call_args.kwargs
+    request = client.responses.parse.call_args.kwargs
+    assert request["text_format"] is module.Classification
+    assert module.Ticket.model_validate_json(request["input"]).subject
     assert request["store"] is False
     assert request["model"] == "gpt-4.1-mini"
     assert "bug (broken behavior)" in request["instructions"]
@@ -103,10 +105,11 @@ def test_jsonl_replacement_preserves_dataset_and_scores(quickstart, tmp_path: Pa
     assert native["scores"] == file["scores"]
 
 
-@pytest.mark.parametrize("answer", ["wrong", "bug: broken behavior", ""])
-def test_bad_answers_are_scores_not_execution_failures(quickstart, answer: str) -> None:
-    _, _, client = quickstart
-    client.responses.create.side_effect = lambda **kwargs: SimpleNamespace(output_text=answer)
+def test_wrong_labels_are_scores_not_execution_failures(quickstart) -> None:
+    module, _, client = quickstart
+    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
+        output_parsed=module.Classification(label="feature")
+    )
     assert main(["run", "ticket_eval:classify", "--output", "ungated"]) == 0
     assert (
         main(["run", "ticket_eval:classify", "--require", "accuracy>=0.9", "--output", "gated"])
@@ -114,23 +117,47 @@ def test_bad_answers_are_scores_not_execution_failures(quickstart, answer: str) 
     )
     result = json.loads(Path("gated/run.json").read_text())
     assert result["counts"]["failed"] == 0
-    assert result["scores"]["accuracy"]["mean"] == 0
+    assert result["scores"]["accuracy"]["mean"] == pytest.approx(1 / 3)
     assert Path("gated/report.html").is_file()
 
 
 def test_model_failure_keeps_other_results_and_closes_clients(quickstart) -> None:
     _, constructor, client = quickstart
-    respond = client.responses.create.side_effect
+    respond = client.responses.parse.side_effect
 
     def fail_one(**kwargs):
-        if "PDF" in kwargs["input"]:
+        if "PDF" in json.loads(kwargs["input"])["body"]:
             raise RuntimeError("Synthetic model failure")
         return respond(**kwargs)
 
-    client.responses.create.side_effect = fail_one
+    client.responses.parse.side_effect = fail_one
     assert main(["run", "ticket_eval:classify", "--output", "failed"]) == 1
     result = json.loads(Path("failed/run.json").read_text())
     assert result["counts"]["failed"] == 1
     assert result["scores"]["accuracy"]["count"] == 2
     assert constructor.return_value.__exit__.call_count == 3
     assert Path("failed/report.html").is_file()
+
+
+@pytest.mark.parametrize("answer", [None, {"label": "unknown"}, {"label": 42}])
+def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, answer) -> None:
+    module, constructor, client = quickstart
+    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
+        output_parsed=None if answer is None else module.Classification.model_validate(answer)
+    )
+    assert main(["run", "ticket_eval:classify", "--output", "invalid"]) == 1
+    result = json.loads(Path("invalid/run.json").read_text())
+    assert result["counts"]["failed"] == 3
+    assert result["scores"]["accuracy"]["count"] == 0
+    assert constructor.return_value.__exit__.call_count == 3
+
+
+def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
+    module, constructor, _ = quickstart
+    # Exercise the reader's schema, not only Pydantic construction in application code.
+    source = PYTHON_BLOCKS[0].replace(
+        'expected=Classification(label="bug")', 'expected={"label": "unknown"}'
+    )
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    assert main(["run", "ticket_eval:classify", "--output", "invalid-data"]) == 2
+    constructor.assert_not_called()

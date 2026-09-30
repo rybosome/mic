@@ -21,66 +21,103 @@ and questions. Before changing its prompt or model, give yourself a repeatable c
 With Python 3.12+, install Mic and the SDK used by this example:
 
 ```console
-python -m pip install mic-evals openai
+python -m pip install "mic-evals[pydantic]" openai
 ```
 
-Mic itself has no third-party runtime dependencies. `openai` is only for the
-classifier below; replace that function with your own model or application call.
-The example uses the [OpenAI Python SDK](https://developers.openai.com/api/docs/libraries)
-and [GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
+Mic's core has no third-party runtime dependencies. This example opts into Pydantic
+and the OpenAI SDK to share a typed output contract between Mic and the model call.
+It uses [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+with [GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini);
+replace the classifier function with your own model or application call.
 Set `OPENAI_API_KEY` in your environment using your usual secret-management method.
 Running it sends the example messages to OpenAI and incurs normal API charges.
 
 Save this complete example as `ticket_eval.py`:
 
 ```python
+from typing import Literal
+
+from pydantic import BaseModel
+
 import mic
 
 
-def classify_ticket(message: str) -> str:
+class Ticket(BaseModel):
+    subject: str
+    body: str
+
+
+class Classification(BaseModel):
+    label: Literal["bug", "feature", "question"]
+
+
+def classify_ticket(ticket: Ticket) -> Classification:
     from openai import OpenAI
 
     # Create the client only when the task runs, and close it after the call.
     with OpenAI(timeout=30, max_retries=0) as client:
-        response = client.responses.create(
+        response = client.responses.parse(
             model="gpt-4.1-mini",
             instructions=(
-                "Classify the support message. Reply with only one label: "
+                "Classify the support ticket as "
                 "bug (broken behavior), feature (new capability), or question (how-to)."
             ),
-            input=message,
+            input=ticket.model_dump_json(),
+            text_format=Classification,
             store=False,
         )
-        return response.output_text.strip()
+        if response.output_parsed is None:
+            raise ValueError("The model did not return a classification.")
+        return response.output_parsed
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=str, expected=str))
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
 def tickets() -> list[mic.RawCase]:
     return [
-        mic.RawCase(id="upload", input="The app closes whenever I upload a PDF.", expected="bug"),
         mic.RawCase(
-            id="export", input="Can you add an option to export invoices?", expected="feature"
+            id="upload",
+            input=Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
+            expected=Classification(label="bug"),
         ),
         mic.RawCase(
-            id="invoice", input="Where can I download last month's invoice?", expected="question"
+            id="export",
+            input=Ticket(
+                subject="Invoice export", body="Can you add an option to export invoices?"
+            ),
+            expected=Classification(label="feature"),
+        ),
+        mic.RawCase(
+            id="invoice",
+            input=Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
+            expected=Classification(label="question"),
         ),
     ]
 
 
 @mic.scorer(name="accuracy", requires_expected=True)
-def accuracy(ctx: mic.ScoreContext[str, str, str, mic.JsonObject]) -> float:
-    return float(ctx.output == ctx.require_expected())
+def accuracy(
+    ctx: mic.ScoreContext[Ticket, Classification, Classification, mic.JsonObject],
+) -> float:
+    return float(ctx.output.label == ctx.require_expected().label)
 
 
-@mic.eval(name="classify", dataset=tickets, output=str, scorers=[accuracy])
-def classify(ctx: mic.TaskContext[str, mic.JsonObject], message: str) -> str:
-    return classify_ticket(message)
+@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+def classify(
+    ctx: mic.TaskContext[Classification, mic.JsonObject], ticket: Ticket
+) -> Classification:
+    return classify_ticket(ticket)
 ```
 
-The dataset supplies the cases, the task calls the classifier, and the scorer gives
-each answer a `1` for a matching label or `0` otherwise. An unexpected label or extra
-explanation scores zero too. These three illustrative cases make the example easy
-to run; a useful evaluation needs a larger, representative set of labeled messages.
+`Ticket` gives the task typed inputs; `Classification` defines both the expected
+answer and the model's structured output. The SDK derives its output schema from
+that class and parses the response into it. Mic validates dataset values and task
+outputs against the same types, so the scorer works with objects, not JSON parsing
+or string cleanup.
+
+A valid but wrong label scores `0`; the right label scores `1`. Invalid output or
+no parsed classification (for example, a refusal) is an execution failure, not a
+wrong answer. These three cases are illustrative; a useful evaluation needs a
+larger, representative set of labeled tickets.
 
 Run it from the directory containing `ticket_eval.py`, then open the report:
 
@@ -91,8 +128,8 @@ mic report .mic/tickets-first --open
 
 That's three classifier calls. The report shows each message, its expected label,
 the actual response, and its score, alongside aggregate accuracy and execution
-failures. Start with the cases that scored zero: was the answer wrong, was the
-expected label ambiguous, or did the response include unwanted prose?
+failures. Review low-scoring cases for wrong answers or ambiguous expected labels,
+and execution failures for calls that did not produce a valid classification.
 
 Each run saves its dataset snapshot, per-trial results, and summary as JSON/JSONL,
 plus a self-contained HTML report you can open without a server or network.
@@ -140,9 +177,9 @@ of a wrong answer. A failed quality gate still leaves local results to investiga
 Save the same cases as `tickets.jsonl` beside `ticket_eval.py`:
 
 ```jsonl
-{"id":"upload","input":"The app closes whenever I upload a PDF.","expected":"bug"}
-{"id":"export","input":"Can you add an option to export invoices?","expected":"feature"}
-{"id":"invoice","input":"Where can I download last month's invoice?","expected":"question"}
+{"id":"upload","input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
+{"id":"export","input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
+{"id":"invoice","input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
 ```
 
 Replace the `tickets` definition with this, adding the two imports:
@@ -153,12 +190,14 @@ from pathlib import Path
 from mic.providers.files import FileHandle
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=str, expected=str))
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
 def tickets() -> FileHandle:
     return FileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
-The task, scorer, and run command stay the same. Add cases from real failures as
+Mic hydrates the JSON objects into `Ticket` and `Classification` instances and
+rejects invalid cases before calling the model. The task, scorer, and run command
+stay the same. Add cases from real failures as
 you encounter them—for example, a message that sounds like a feature request but
 describes an existing feature that stopped working.
 
