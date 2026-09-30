@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import mic
+from mic._runtime.artifacts import has_artifact_failure
 from mic._runtime.discovery import list_definitions, resolve_definition
 from mic._runtime.materialization import resolve_source
 from mic.errors import ConfigurationError, DatasetError, MicError
@@ -181,7 +182,10 @@ def _execute(args: argparse.Namespace) -> int:
         _print_json(run_result.manifest)
     else:
         print(format_summary(run_result.manifest))
-        print(f"Report       {run_result.output_dir / 'report.html'}")
+        if has_artifact_failure(run_result.manifest):
+            print(f"Evidence     {run_result.output_dir} may be incomplete or stale")
+        else:
+            print(f"Report       {run_result.output_dir / 'report.html'}")
     return run_result.exit_code
 
 

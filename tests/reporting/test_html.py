@@ -100,7 +100,7 @@ def test_report_output_cannot_overwrite_source_artifacts(
 def test_failed_atomic_replacement_preserves_existing_report_and_cleans_temp_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import mic.reporters.html as renderer
+    from mic._runtime import files
 
     manifest, cases = sample()
     (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -116,11 +116,11 @@ def test_failed_atomic_replacement_preserves_existing_report_and_cleans_temp_fil
         assert target == destination
         raise OSError("replacement unavailable")
 
-    monkeypatch.setattr(renderer.os, "replace", fail_replace)
+    monkeypatch.setattr(files.os, "replace", fail_replace)
     with pytest.raises(ConfigurationError, match="replacement unavailable"):
         write_report(tmp_path)
     assert destination.read_text(encoding="utf-8") == "previous complete report"
-    assert not list(tmp_path.glob(".mic-report-*"))
+    assert not list(tmp_path.glob(".mic-*"))
 
 
 def test_csp_hash_matches_exact_executable_script() -> None:

@@ -48,6 +48,14 @@ Smaller client doubles cover fault injection and cleanup. These checks are disti
 from live integration tests; see [providers](providers.md) for the two opt-in commands.
 Live Braintrust experiment export remains a separate manual acceptance check.
 
+Artifact tests inject permission, disk-full, replacement, rendering, and cleanup
+failures through the real runner. They check retained cases, bounded recovery,
+preservation of setup errors/cancellation, and suppression of further exports.
+Atomic-write tests check that partial writes do not replace earlier files. These
+controlled failures do not establish power-loss durability or filesystem-wide
+transactionality; real filesystem behavior still depends on the operating system
+and storage. No live provider access is needed for these tests.
+
 Coverage is a guide to untested behavior rather than a release claim. CLI subprocesses,
 clean-wheel smoke runs, and Node DOM tests have separate pass/fail results and are not
 fully attributed to the main Python coverage process.

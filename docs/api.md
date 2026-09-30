@@ -59,10 +59,15 @@ their own boundaries.
 Blocking entrypoints use plain names: `run`, `preflight`, and `inspect_dataset`.
 Async hosts use `await arun`, `await apreflight`, and `await ainspect_dataset`.
 The run pair returns `RunResult(manifest, cases, output_dir, exit_code)`. Setup
-failures raise typed `ConfigurationError`/`DatasetError`; after a run directory
-exists the exception has a note pointing to its error report. A dataset-snapshot
+failures raise typed `ConfigurationError`/`DatasetError`; when error artifacts are
+successfully saved, the exception has a note pointing to its report. A dataset-snapshot
 write failure returns exit 1 and saves an artifact-phase failure where the remaining
-evidence files are writable. Uninspectable schema adapters and non-callable scorers
+evidence files are writable. This also applies to filesystem initialization and
+terminal manifest/report failures: computed cases remain in the returned result,
+and persisted files may be incomplete or stale. Configuration/dataset errors and
+cancellation retain their original exception when error persistence also fails;
+secondary failures appear in exception notes. An existing nonempty output directory
+is rejected without writing into it. Uninspectable schema adapters and non-callable scorers
 fail before source access. Library code does not set process exit status. The CLI
 translates results/errors into exit codes.
 
@@ -96,6 +101,10 @@ Every run writes `dataset.jsonl`, `cases.jsonl`, `run.json`, and `report.html`.
 The manifest records input/expected/metadata and output schemas, selection, logical digest, source provenance, options,
 source-module/framework hashes, versions, metrics, failures, and export status.
 It intentionally omits environment dumps. Full evaluated values remain available.
+Code provenance's framework hash covers Python sources throughout the `mic` package.
+Reports embed case data, and exception text and provenance may be sensitive. Read
+[sensitive evidence and persistence failures](reporting.md#sensitive-evidence-and-sharing)
+before sharing reports or enabling remote export.
 
 Scores are finite numbers or `None`; booleans are rejected. Numeric means exclude
 null/unavailable values. Percentiles use TypeScript's nearest-rank convention.
@@ -109,3 +118,6 @@ Optional reporters implement `name`, `async prepare()`, and
 reporting runs only after complete local artifacts exist. Reporters receive copies
 so they cannot mutate local evidence. Export failure/cancellation is recorded
 separately and never causes task replay.
+Artifact failures prevent export; failure to save a reporter's outcome prevents
+subsequent reporters from starting. The completed remote write is not undone or
+repeated. In-memory results retain the known outcome when the filesystem cannot.

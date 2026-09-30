@@ -24,6 +24,71 @@ script and inline styles. It blocks network requests and outside code. Raw
 artifacts contain evaluated input/output content; they intentionally do not dump
 the process environment.
 
+## Sensitive evidence and sharing
+
+Treat the run directory and HTML report as copies of your evaluation data. The
+dataset snapshot contains inputs, expected values, metadata, and IDs. Case records
+add outputs, task and score metadata, source provenance, and errors. The manifest
+includes dataset provenance, code identity, and failures. Provenance can contain
+absolute local paths, SQL text and parameter values, project/dataset identifiers,
+and record IDs. Exception messages and tracebacks can include sensitive application
+text, source lines, and filesystem paths.
+
+The HTML embeds the complete manifest and case records. Search filters, collapsed
+panels, and hidden fields do not remove data from the file. Offline operation and
+the Content Security Policy prevent network access and executable data injection;
+they do not redact or encrypt the report. Mic does not provide automatic redaction.
+It cannot identify every secret in arbitrary user data or exception text.
+
+Sanitize sensitive inputs, metadata, SQL parameters, and exception messages before
+they enter an evaluation. Review the actual JSON and embedded HTML data before
+sharing them. Keep run directories in access-controlled storage. The repository's
+`.gitignore` excludes `.mic/`, but it does not protect custom output directories,
+copied reports, or CI artifact uploads. Temporary evidence files may also contain
+sensitive content; a filesystem fault can prevent their cleanup.
+
+Enabling Braintrust export sends input/expected/output and scores, plus the full
+case record under `metadata.mic.case` and dataset information under `metadata.mic`.
+That includes case errors and provenance. Review this payload and the destination's
+access controls before enabling export. Mic does not deliberately record provider
+API keys or the process environment, but credentials placed in evaluation data or
+user-generated exception messages become part of the evidence.
+
+## Persistence failures and cancellation
+
+Manifest, dataset snapshot, and report replacements use temporary files in the
+destination directory. A failed write or replacement preserves any previous
+complete destination file. These are atomic replacements of individual files,
+not a transaction across the directory or a guarantee of durability after power
+loss. The append-only case journal records completion order; an interrupted write
+can leave an incomplete last record. Report regeneration rejects malformed records.
+
+Terminal finalization attempts both the manifest and HTML independently. If either
+fails, Mic records artifact failures in memory and makes one recovery attempt to
+save the updated outcome. A persistent fault can leave files missing or stale,
+including a previous manifest whose status is still `running`. The returned
+`RunResult` retains computed cases and the known failures even when they cannot be
+saved. The CLI warns that evidence may be incomplete or stale rather than claiming
+a report was successfully written. A recovered write still leaves the run failed
+so callers can see that an artifact fault occurred.
+
+Filesystem initialization, snapshot, journal, and finalization failures produce
+exit code 1. If Mic cannot verify or create an empty output directory, it returns
+the failure in memory without attempting to write into that directory.
+Configuration/dataset setup errors keep their typed exception and
+exit code 2 even if saving the error also fails. Cancellation keeps exit code 130
+and re-raises `CancelledError` after cleanup. Error notes identify secondary
+persistence failures; they link to a report only after successful finalization.
+Terminal outcomes include elapsed duration, including setup cancellation. Duration
+is measured through the start of the latest finalization, including any completed
+reporting work, but excludes that finalization's disk-write time.
+
+An artifact failure prevents remote reporting from starting, even if recovery
+succeeds. After each reporter, Mic saves its outcome. If those writes fail, later
+reporters are not started. An export may already have completed remotely; the
+known outcome remains in memory, but local files may not reflect it. Artifact
+recovery never re-executes tasks or retries an export.
+
 ## Console and discovery
 
 `mic list MODULE` imports only that selected Python module and inspects descriptors;
