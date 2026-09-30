@@ -109,34 +109,21 @@ def describe[T](adapter: Schema[T], label: str) -> JsonObject:
         raise ConfigurationError(f"{label} schema is not inspectable: {exc}") from exc
 
 
-def normalize_scores(raw: object, metrics: tuple[str, ...]) -> list[JsonObject]:
+def normalize_score(raw: object, name: str) -> JsonObject:
+    """Normalize one scorer's numeric/null result under its declared metric name."""
+    nonempty("score name", name)
     if isinstance(raw, Score):
-        scores: list[object] = [raw]
-    elif isinstance(raw, (list, tuple)):
-        scores = list(cast(Sequence[object], raw))
+        value = raw.value
+        metadata = raw.metadata
     else:
-        raise TypeError("Scorers must return a Score or sequence of Score objects")
-    if not scores:
-        raise ValueError("Scorer returned an empty score sequence")
-    out: list[JsonObject] = []
-    names: set[str] = set()
-    for score in scores:
-        if not isinstance(score, Score):
-            raise TypeError("Scorers must return Score objects")
-        nonempty("score name", score.name)
-        if score.name in names:
-            raise ValueError(f"Duplicate score name {score.name!r}")
-        names.add(score.name)
-        if score.value is not None and (
-            type(score.value) not in (float, int) or not math.isfinite(score.value)
-        ):
-            raise ValueError(f"Score {score.name!r} must be a finite number or None, not bool")
-        out.append(
-            {"name": score.name, "value": score.value, "metadata": json_object(score.metadata)}
-        )
-    if names != set(metrics):
-        raise ValueError(f"Scorer declared {metrics!r}, returned {tuple(sorted(names))!r}")
-    return out
+        value = raw
+        metadata = {}
+    if value is not None and (
+        type(value) not in (float, int) or not math.isfinite(cast(float, value))
+    ):
+        raise ValueError(f"Score {name!r} must be a finite number or None")
+    normalized = cast(float | int | None, value)
+    return {"name": name, "value": normalized, "metadata": json_object(metadata)}
 
 
 def numeric_stats(values: Sequence[float]) -> JsonObject:

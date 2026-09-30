@@ -69,7 +69,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("selector")
     _execution(run)
     run.add_argument("--output", type=Path)
-    run.add_argument("--model-preset")
     run.add_argument("--timeout", type=float, help="Cooperative per-trial timeout in seconds")
     run.add_argument("--require", action="append", default=[], metavar="METRIC>=VALUE")
     run.add_argument("--json", action="store_true", help="Print the complete final run manifest")
@@ -151,23 +150,19 @@ def _execute(args: argparse.Namespace) -> int:
         if args.command == "estimate":
             _print_json(asyncio.run(_estimate(dataset, args.dataset_timeout)))
             return 0
-        _print_json(
-            asyncio.run(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
-        )
+        _print_json(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
         return 0
     if not isinstance(definition, mic.Evaluation):
         raise ConfigurationError(f"{args.command} requires an evaluation definition")
     reporters = _reporters(args)
     if args.command == "preflight":
-        result: JsonObject = asyncio.run(
-            mic.preflight(
-                definition,
-                trials=args.trials,
-                concurrency=args.concurrency,
-                limits=_read_limits(args),
-                max_executions=args.max_executions,
-                reporters=reporters,
-            )
+        result: JsonObject = mic.preflight(
+            definition,
+            trials=args.trials,
+            concurrency=args.concurrency,
+            limits=_read_limits(args),
+            max_executions=args.max_executions,
+            reporters=reporters,
         )
         _print_json(result)
         return 0
@@ -176,7 +171,6 @@ def _execute(args: argparse.Namespace) -> int:
         output=args.output,
         trials=args.trials,
         concurrency=args.concurrency,
-        model_preset=args.model_preset,
         timeout=args.timeout,
         require=args.require,
         limits=_read_limits(args),

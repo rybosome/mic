@@ -52,20 +52,20 @@ def test_nested_dataclass_scorer_mutation_does_not_cross_trials_or_scorers(tmp_p
     seen = []
 
     @mic.scorer(name="mutating")
-    def mutating(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> mic.Score:
+    def mutating(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> int:
         assert ctx.input.messages[0].text
         ctx.input.messages.clear()
         ctx.require_expected().evidence["messages"].append(99)
         ctx.output.evidence["messages"].append(88)
-        return mic.Score("mutating", 1)
+        return 1
 
     @mic.scorer(name="pristine")
-    def pristine(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> mic.Score:
+    def pristine(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> int:
         seen.append(ctx.case_id)
         assert len(ctx.input.messages) == 1
         assert ctx.require_expected().evidence == {"messages": [0]}
         assert ctx.output.evidence == {"messages": [0]}
-        return mic.Score("pristine", 1)
+        return 1
 
     spec = replace(classify, scorers=(mutating, pristine))
     result = mic.run(spec, trials=3, output=tmp_path / "isolation")

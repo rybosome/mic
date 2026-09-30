@@ -38,32 +38,40 @@ and metadata can all be nested objects. No base class or mic field decorator is 
 from dataclasses import dataclass, field
 import mic
 
+
 @dataclass(frozen=True)
 class Message:
     role: str
     text: str
+
 
 @dataclass
 class Ticket:
     messages: list[Message]
     context: dict[str, list[str]] = field(default_factory=dict)
 
+
 @dataclass
 class Decision:
     label: str
     evidence: dict[str, list[int]] = field(default_factory=dict)
 
+
 @mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Decision))
 def tickets() -> list[mic.RawCase]:
-    return [mic.RawCase(
-        id="crash",
-        input=Ticket([Message("user", "It crashes on startup")]),
-        expected=Decision("bug", {"messages": [0]}),
-    )]
+    return [
+        mic.RawCase(
+            id="crash",
+            input=Ticket([Message("user", "It crashes on startup")]),
+            expected=Decision("bug", {"messages": [0]}),
+        )
+    ]
+
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> mic.Score:
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> float:
+    return float(ctx.output == ctx.require_expected())
+
 
 @mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
 def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
@@ -105,11 +113,12 @@ from mic.providers.braintrust import BraintrustHandle
 
 FileHandle(Path("fixtures/cases.jsonl"))
 BigQueryHandle(
-    billing_project="my-project", location="US",
+    billing_project="my-project",
+    location="US",
     sql="SELECT id, input, expected FROM `my-project.evals.cases` ORDER BY id",
     maximum_bytes_billed=100_000_000,
 )
-BraintrustHandle(dataset_id="existing-id", version="pinned-version")
+BraintrustHandle(dataset_id="existing-id", xact_id="pinned-xact-id")
 ```
 
 Install cloud extras with `uv sync --frozen --all-extras`. BigQuery uses Application
@@ -133,7 +142,7 @@ upload failure handling, exact null representation, and the pinned SDK boundary.
 
 | Exit | Meaning |
 | --- | --- |
-| 0 | Execution succeeded; any explicit quality gates passed; or definition skipped |
+| 0 | Execution succeeded and any explicit quality gates passed |
 | 1 | A task/schema/scorer, artifact write, quality gate, or export failed |
 | 2 | Invalid configuration or dataset preflight failure |
 | 130 | Interrupted; partial local evidence retained where writable |

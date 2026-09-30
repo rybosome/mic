@@ -66,13 +66,16 @@ def file_tickets() -> FileHandle:
     return FileHandle(Path(__file__).parent / "fixtures" / "structured.jsonl")
 
 
-@mic.scorer(name="decision", metrics=("label", "evidence"))
-def decision_scores(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> list[mic.Score]:
+@mic.scorer(name="label")
+def label_score(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> float:
     expected = ctx.require_expected()
-    return [
-        mic.Score("label", float(ctx.output.label == expected.label)),
-        mic.Score("evidence", float(ctx.output.evidence == expected.evidence)),
-    ]
+    return float(ctx.output.label == expected.label)
+
+
+@mic.scorer(name="evidence")
+def evidence_score(ctx: mic.ScoreContext[Ticket, Decision, Decision, Metadata]) -> float:
+    expected = ctx.require_expected()
+    return float(ctx.output.evidence == expected.evidence)
 
 
 def classify_ticket(ticket: Ticket) -> mic.TaskResult[Decision]:
@@ -91,7 +94,12 @@ def classify_ticket(ticket: Ticket) -> mic.TaskResult[Decision]:
     return mic.TaskResult(Decision("question"), metadata={"model": "rules"})
 
 
-@mic.eval(name="structured.classify", dataset=tickets, output=Decision, scorers=[decision_scores])
+@mic.eval(
+    name="structured.classify",
+    dataset=tickets,
+    output=Decision,
+    scorers=[label_score, evidence_score],
+)
 def classify(ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket) -> mic.TaskResult[Decision]:
     return classify_ticket(ticket)
 
@@ -100,7 +108,7 @@ def classify(ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket) -> mic.Ta
     name="structured.classify_file",
     dataset=file_tickets,
     output=Decision,
-    scorers=[decision_scores],
+    scorers=[label_score, evidence_score],
 )
 def classify_file(
     ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket

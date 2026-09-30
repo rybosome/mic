@@ -11,11 +11,11 @@ def text_data() -> list[mic.RawCase]:
 
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[str, str, str, mic.JsonObject]) -> mic.Score:
+def exact(ctx: mic.ScoreContext[str, str, str, mic.JsonObject]) -> float:
     assert_type(ctx.input, str)
     assert_type(ctx.output, str)
     assert_type(ctx.require_expected(), str)
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+    return float(ctx.output == ctx.require_expected())
 
 
 @mic.eval(name="sync", dataset=text_data, output=str, scorers=[exact])

@@ -10,7 +10,7 @@ from .artifacts import failure
 from .callbacks import CallbackPool
 from .contracts import Case
 from .options import Options
-from .validation import json_object, normalize_scores, serialize, validate
+from .validation import json_object, normalize_score, serialize, validate
 
 
 async def run_case[I, O, E, M](
@@ -46,9 +46,7 @@ async def run_case[I, O, E, M](
     try:
         async with asyncio.timeout(options.timeout):
             cloned = copy.deepcopy(row)
-            ctx = TaskContext(
-                cloned.id, trial, cloned.expected, cloned.metadata, options.model_preset
-            )
+            ctx = TaskContext(cloned.id, trial, cloned.expected, cloned.metadata)
             raw = await pool.invoke(spec.function, ctx, cloned.input)
             latencies["task_ms"] = (time.perf_counter() - phase_started) * 1000
             phase = "schema"
@@ -64,13 +62,11 @@ async def run_case[I, O, E, M](
                     else json_object(serialize(spec.dataset.schema.metadata, metadata))
                 )
                 merged.update(task_metadata)
-                metadata = validate(
-                    spec.dataset.schema.metadata, merged, strict=spec.dataset.schema.strict
-                )
+                metadata = validate(spec.dataset.schema.metadata, merged)
                 json_object(serialize(spec.dataset.schema.metadata, metadata), "$.metadata")
             else:
                 output_raw = raw
-            output = validate(spec.output, output_raw, strict=spec.dataset.schema.strict)
+            output = validate(spec.output, output_raw)
             result["output"] = serialize(spec.output, output)
             phase = "scorer"
             phase_started = time.perf_counter()
@@ -84,9 +80,8 @@ async def run_case[I, O, E, M](
                     row.id,
                     trial,
                 )
-                raw_scores = await pool.invoke(scorer.function, context)
-                normalized = normalize_scores(raw_scores, scorer.metrics)
-                scores.extend(normalized)
+                raw_score = await pool.invoke(scorer.function, context)
+                scores.append(normalize_score(raw_score, scorer.name))
             latencies["scoring_ms"] = (time.perf_counter() - phase_started) * 1000
     except asyncio.CancelledError as exc:
         result["status"] = "cancelled"

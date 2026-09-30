@@ -20,8 +20,8 @@ def wrong_expected(ctx: mic.TaskContext[int, mic.JsonObject], value: str) -> str
 
 
 @mic.scorer(name="wrong-scorer")
-def wrong_scorer(ctx: mic.ScoreContext[int, str, str, mic.JsonObject]) -> mic.Score:
-    return mic.Score("wrong-scorer", 1)
+def wrong_scorer(ctx: mic.ScoreContext[int, str, str, mic.JsonObject]) -> float:
+    return {"wrong": "scorer"}  # expect-error
 
 
 mic.eval(

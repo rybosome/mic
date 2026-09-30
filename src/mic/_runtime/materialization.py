@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
-from .._async import drain
+from .._async import drain, run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import MISSING, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
 from ..providers.base import Resolver
@@ -104,7 +104,6 @@ async def load_dataset[I, E, M](
         "expected": describe(schema.expected, "expected"),
         "metadata": describe(schema.metadata, "metadata"),
         "expected_policy": schema.expected_policy,
-        "strict": schema.strict,
     }
     row_index = 0
     try:
@@ -120,19 +119,17 @@ async def load_dataset[I, E, M](
                                 f"Dataset exceeds max_rows={caps.max_rows}; no tasks started"
                             )
                         mapped = _mapped_case(dataset.map_row(raw))
-                        case_input = validate(schema.input, mapped.input, strict=schema.strict)
+                        case_input = validate(schema.input, mapped.input)
                         if isinstance(mapped.expected, Missing):
                             if schema.expected_policy == "required":
                                 raise ValueError("Missing required field 'expected'")
                             expected: E | Missing = mapped.expected
                         else:
-                            expected = validate(
-                                schema.expected, mapped.expected, strict=schema.strict
-                            )
+                            expected = validate(schema.expected, mapped.expected)
                         metadata = (
                             None
                             if mapped.metadata is None
-                            else validate(schema.metadata, mapped.metadata, strict=schema.strict)
+                            else validate(schema.metadata, mapped.metadata)
                         )
                         normalized: JsonObject = {"input": serialize(schema.input, case_input)}
                         if not isinstance(expected, Missing):
@@ -200,7 +197,7 @@ def _mapped_case(value: object) -> RawCase:
     return value
 
 
-async def inspect_dataset[I, E, M](
+async def ainspect_dataset[I, E, M](
     dataset: Dataset[I, E, M],
     *,
     limit: int | None = None,
@@ -209,3 +206,17 @@ async def inspect_dataset[I, E, M](
 ) -> JsonObject:
     snapshot = await load_dataset(dataset, limits=limits, resolver=resolver, limit=limit)
     return {"dataset": snapshot.summary, "rows": cast(list[JsonValue], snapshot.rows)}
+
+
+def inspect_dataset[I, E, M](
+    dataset: Dataset[I, E, M],
+    *,
+    limit: int | None = None,
+    limits: ReadLimits | None = None,
+    resolver: Resolver | None = None,
+) -> JsonObject:
+    return run_sync(
+        "mic.inspect_dataset()",
+        "mic.ainspect_dataset",
+        lambda: ainspect_dataset(dataset, limit=limit, limits=limits, resolver=resolver),
+    )

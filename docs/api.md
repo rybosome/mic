@@ -18,10 +18,10 @@ passes strict Pyright.
   strict and reject `strict=False`. Use explicit mapping for normalization.
   Optional Pydantic adapters preserve constraints and aliases through strict JSON
   hydration; canonical snapshots use Python field names. See [schemas](schemas.md).
-- `@scorer(name=..., metrics=(...), requires_expected=True)` accepts a synchronous
-  or async function taking `ScoreContext[I,O,E,M]`. Return `Score` or a nonempty
-  list/tuple of `Score`. A single metric defaults to the scorer name. Multi-score
-  returns must emit each declared metric once; emit `None` when inapplicable.
+- `@scorer(name=..., requires_expected=True)` accepts a synchronous or async
+  function taking `ScoreContext[I,O,E,M]`. Each scorer defines exactly one metric,
+  named by the scorer. Return a finite `float`/`int`, `None` when inapplicable, or
+  `Score(value, metadata)` when the score needs JSON metadata.
 - `@eval(name=..., dataset=..., output=..., scorers=[...], trials=1, concurrency=10)`
   accepts a task `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
@@ -56,18 +56,18 @@ their own boundaries.
 
 ## Execution and errors
 
-`run` is the synchronous entrypoint; `await arun` is for async hosts. Both return
-`RunResult(manifest, cases, output_dir, exit_code)`. Setup failures raise typed
-`ConfigurationError`/`DatasetError`; after a run directory exists the exception
-has a note pointing to its error report. A dataset-snapshot write failure returns exit 1 and saves an artifact-phase failure
-where the remaining evidence files are writable. Uninspectable schema adapters and
-non-callable scorers fail before source access.
-Library code does not set process exit
-status. The CLI translates results/errors into exit codes.
+Blocking entrypoints use plain names: `run`, `preflight`, and `inspect_dataset`.
+Async hosts use `await arun`, `await apreflight`, and `await ainspect_dataset`.
+The run pair returns `RunResult(manifest, cases, output_dir, exit_code)`. Setup
+failures raise typed `ConfigurationError`/`DatasetError`; after a run directory
+exists the exception has a note pointing to its error report. A dataset-snapshot
+write failure returns exit 1 and saves an artifact-phase failure where the remaining
+evidence files are writable. Uninspectable schema adapters and non-callable scorers
+fail before source access. Library code does not set process exit status. The CLI
+translates results/errors into exit codes.
 
-Configuration precedence is invocation arguments, decorated defaults, documented
-environment fallback (`MIC_MODEL_PRESET` only), then library defaults. There is
-no implicit `.env` loading. Skipped definitions avoid source access and execution.
+Configuration precedence is invocation arguments, decorated defaults, then library
+defaults. There is no implicit `.env` loading.
 
 All selected rows are read/validated before tasks start. `ReadLimits` defaults to
 10,000 rows, 64 MiB serialized bytes, 1 MiB per record, and a 60-second source deadline.
@@ -80,7 +80,7 @@ every scorer gets an independent copy of pristine input/expected and validated
 output/merged metadata. Scorers run in declaration order. Final API/report ordering
 is row index then one-based trial number; the on-disk case journal records completion
 order. Earlier successful scores remain if a later scorer fails, and the case still
-fails. A malformed multi-score return contributes no partial scores from that scorer.
+fails.
 
 Async functions are awaited; synchronous functions run in a dedicated bounded
 thread executor. Trial timeout covers task and scorers. On timeout/cancellation,
@@ -99,7 +99,7 @@ It intentionally omits environment dumps. Full evaluated values remain available
 
 Scores are finite numbers or `None`; booleans are rejected. Numeric means exclude
 null/unavailable values. Percentiles use TypeScript's nearest-rank convention.
-Numeric, null and unavailable counts are reported for every declared metric.
+Numeric, null and unavailable counts are reported for every scorer.
 The CLI gate grammar is `metric >= number` (also `<=`, `==`, `>`, `<`); the argument
 must be shell-quoted. Missing numeric values make a configured gate unevaluable
 and therefore failing. Any execution error fails regardless of the numeric mean.

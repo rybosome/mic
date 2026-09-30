@@ -26,7 +26,7 @@ from ._io import ReadBudget, parse_json
 @dataclass(frozen=True)
 class BraintrustHandle:
     dataset_id: str
-    version: str
+    xact_id: str
     api_url: str | None = None
     page_size: int = 100
     timeout: float = 30.0
@@ -41,8 +41,8 @@ def _settings(handle: BraintrustHandle, configured_key: str | None) -> tuple[str
 
     if not nonempty_text(handle.dataset_id):
         raise ConfigurationError("Braintrust requires an existing dataset_id")
-    if not nonempty_text(handle.version) or (handle.version.lower() in {"latest", "head", "main"}):
-        raise ConfigurationError("Braintrust requires an explicit pinned version (_xact_id)")
+    if not nonempty_text(handle.xact_id) or (handle.xact_id.lower() in {"latest", "head", "main"}):
+        raise ConfigurationError("Braintrust requires an explicit pinned xact_id")
     if not positive_integer(handle.page_size):
         raise ConfigurationError("Braintrust page_size must be a positive integer")
     if isinstance(handle.timeout, bool) or not math.isfinite(handle.timeout) or handle.timeout <= 0:
@@ -97,7 +97,7 @@ class _BraintrustRead:
                 "cursor": cursor,
             },
             "fmt": "jsonl",
-            "version": self.handle.version,
+            "version": self.handle.xact_id,
         }
 
     def _row(self, data: bytes, budget: ReadBudget, page: int) -> RawCase:
@@ -111,7 +111,7 @@ class _BraintrustRead:
         provenance: JsonObject = {
             "provider": "braintrust",
             "dataset_id": self.handle.dataset_id,
-            "version": self.handle.version,
+            "xact_id": self.handle.xact_id,
             "record_id": record_id,
         }
         for key in ("_xact_id", "_pagination_key", "created"):
@@ -238,7 +238,7 @@ class BraintrustLoader:
                 {
                     "provider": "braintrust",
                     "dataset_id": handle.dataset_id,
-                    "version": handle.version,
+                    "xact_id": handle.xact_id,
                     "api_url": api_url,
                     "page_size": handle.page_size,
                 },

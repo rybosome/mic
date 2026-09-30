@@ -14,15 +14,18 @@ dataset and task-output boundaries. [Python dataclasses documentation](https://d
 from dataclasses import dataclass, field
 from typing import Literal
 
+
 @dataclass(frozen=True, slots=True)
 class Message:
     role: Literal["user", "assistant"]
     text: str
 
+
 @dataclass
 class Ticket:
     messages: list[Message]
     history: dict[str, list[Message]] = field(default_factory=dict)
+
 
 @dataclass
 class Decision:
@@ -37,17 +40,22 @@ same module, bind your types to a dataset and evaluation:
 ```python
 import mic
 
+
 @mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Decision))
 def tickets() -> list[mic.RawCase]:
-    return [mic.RawCase(
-        id="crash",
-        input=Ticket([Message("user", "It crashes on startup")]),
-        expected=Decision("bug", {"messages": [0]}),
-    )]
+    return [
+        mic.RawCase(
+            id="crash",
+            input=Ticket([Message("user", "It crashes on startup")]),
+            expected=Decision("bug", {"messages": [0]}),
+        )
+    ]
+
 
 @mic.scorer(name="exact")
-def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> mic.Score:
-    return mic.Score("exact", float(ctx.output == ctx.require_expected()))
+def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> float:
+    return float(ctx.output == ctx.require_expected())
+
 
 @mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
 def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
@@ -87,21 +95,25 @@ from mic.providers.braintrust import BraintrustHandle
 
 case_types = mic.case_schema(input=Ticket, expected=Decision)
 
+
 @mic.dataset(name="tickets.file", schema=case_types)
 def file_tickets() -> FileHandle:
     return FileHandle(Path(__file__).with_name("tickets.jsonl"))
 
+
 @mic.dataset(name="tickets.bigquery", schema=case_types)
 def bigquery_tickets() -> BigQueryHandle:
     return BigQueryHandle(
-        billing_project="your-project", location="US",
+        billing_project="your-project",
+        location="US",
         maximum_bytes_billed=100_000_000,
         sql="SELECT id, input, expected FROM `your-project.evals.tickets` ORDER BY id",
     )
 
+
 @mic.dataset(name="tickets.braintrust", schema=case_types)
 def braintrust_tickets() -> BraintrustHandle:
-    return BraintrustHandle(dataset_id="existing-id", version="pinned-version")
+    return BraintrustHandle(dataset_id="existing-id", xact_id="pinned-xact-id")
 ```
 
 BigQuery input/expected columns can be nested records and arrays matching the JSON
@@ -167,8 +179,10 @@ worth the dependency. The core never needs it for ordinary dataclasses.
 from pydantic import BaseModel, Field
 from mic.integrations.pydantic import pydantic_schema
 
+
 class Request(BaseModel):
     count: int = Field(ge=0, alias="quantity")
+
 
 request_schema = mic.case_schema(input=pydantic_schema(Request), expected=int)
 ```
@@ -193,6 +207,7 @@ The runner uses this protocol, which has no dependency on a model library:
 
 ```python
 from typing import Protocol
+
 
 class Schema[T](Protocol):
     def validate(self, value: object, *, strict: bool = True) -> T: ...

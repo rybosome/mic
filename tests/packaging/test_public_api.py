@@ -26,6 +26,8 @@ def test_top_level_api_is_intentional() -> None:
         "Scorer",
         "TaskContext",
         "TaskResult",
+        "ainspect_dataset",
+        "apreflight",
         "arun",
         "case_schema",
         "dataset",

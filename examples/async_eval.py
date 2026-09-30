@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import mic
-from mic import JsonObject, Score, ScoreContext, TaskContext, TaskResult
+from mic import JsonObject, ScoreContext, TaskContext
 
 
 @dataclass
@@ -23,12 +23,12 @@ async def items() -> AsyncIterator[object]:
 
 
 @mic.scorer(name="exact")
-async def exact(context: ScoreContext[Item, str, str, JsonObject]) -> Score:
+async def exact(context: ScoreContext[Item, str, str, JsonObject]) -> float:
     await asyncio.sleep(0)
-    return Score("exact", float(context.output == context.require_expected()))
+    return float(context.output == context.require_expected())
 
 
 @mic.eval(name="async.uppercase", dataset=items, output=str, scorers=[exact], concurrency=3)
-async def uppercase(context: TaskContext[str, JsonObject], item: Item) -> TaskResult[str]:
+async def uppercase(context: TaskContext[str, JsonObject], item: Item) -> str:
     await asyncio.sleep(item.delay)
-    return TaskResult(item.text.upper(), metadata={"model_preset": context.model_preset})
+    return item.text.upper()

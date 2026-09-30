@@ -27,6 +27,7 @@ dataset loading before tasks run; it never selects an implicit prefix. `mic
 inspect ... --limit N` and `inspect_dataset(..., limit=N)` deliberately select a
 prefix. The source adapters check raw sizes where available, and the materializer
 also checks the normalized, serialized case sizes.
+`inspect_dataset` is blocking; async hosts use `await ainspect_dataset(...)`.
 
 Rows normally contain `input`, optional `expected`, optional object-shaped
 `metadata`, and optional string `id`. Missing `expected` is distinct from an
@@ -97,7 +98,7 @@ source = BigQueryHandle(
            FROM `eval-project.evals.triage`
            WHERE team = @team
            ORDER BY case_id""",
-    parameters=(BigQueryParameter("team", "STRING", "support"),),
+    parameters=(BigQueryParameter(name="team", sql_type="STRING", value="support"),),
     maximum_bytes_billed=100_000_000,
     page_size=1000,
     timeout=60.0,
@@ -148,14 +149,14 @@ from mic.providers.braintrust import BraintrustHandle
 
 source = BraintrustHandle(
     dataset_id="existing-dataset-id",
-    version="pinned-xact-id",
+    xact_id="pinned-xact-id",
     api_url="https://api-eu.braintrust.dev",  # Optional explicit data plane.
     page_size=100,
     timeout=30.0,
 )
 ```
 
-`dataset_id` and `version` are required. Empty versions and moving labels
+`dataset_id` and `xact_id` are required. Empty transaction IDs and moving labels
 `latest`, `head`, and `main` are rejected. Obtain the exact dataset `_xact_id`
 from the fixture owner. `api_url` defaults to `BRAINTRUST_API_URL`, then
 `https://api.braintrust.dev`. Explicit handles support EU or self-hosted data
@@ -234,7 +235,7 @@ uv run --extra bigquery pytest tests/integration/test_live_providers.py \
 
 export MIC_LIVE_BRAINTRUST=1
 export MIC_BRAINTRUST_DATASET_ID="existing-fixture-id"
-export MIC_BRAINTRUST_VERSION="exact-fixture-xact-id"
+export MIC_BRAINTRUST_XACT_ID="exact-fixture-xact-id"
 # BRAINTRUST_API_KEY and optional BRAINTRUST_API_URL supplied by your environment.
 uv run --extra braintrust pytest tests/integration/test_live_providers.py \
   -k braintrust --junitxml=.mic/braintrust-live.xml
