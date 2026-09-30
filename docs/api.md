@@ -56,14 +56,15 @@ their own boundaries.
 
 ## Execution and errors
 
-`run` is the synchronous entrypoint; `await arun` is for async hosts. Both return
-`RunResult(manifest, cases, output_dir, exit_code)`. Setup failures raise typed
-`ConfigurationError`/`DatasetError`; after a run directory exists the exception
-has a note pointing to its error report. A dataset-snapshot write failure returns exit 1 and saves an artifact-phase failure
-where the remaining evidence files are writable. Uninspectable schema adapters and
-non-callable scorers fail before source access.
-Library code does not set process exit
-status. The CLI translates results/errors into exit codes.
+Blocking entrypoints use plain names: `run`, `preflight`, and `inspect_dataset`.
+Async hosts use `await arun`, `await apreflight`, and `await ainspect_dataset`.
+The run pair returns `RunResult(manifest, cases, output_dir, exit_code)`. Setup
+failures raise typed `ConfigurationError`/`DatasetError`; after a run directory
+exists the exception has a note pointing to its error report. A dataset-snapshot
+write failure returns exit 1 and saves an artifact-phase failure where the remaining
+evidence files are writable. Uninspectable schema adapters and non-callable scorers
+fail before source access. Library code does not set process exit status. The CLI
+translates results/errors into exit codes.
 
 Configuration precedence is invocation arguments, decorated defaults, then library
 defaults. There is no implicit `.env` loading.

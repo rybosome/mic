@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .._async import run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import Evaluation, JsonObject, ReadLimits, RunResult
 from ..providers.base import Resolver
@@ -32,7 +33,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-async def preflight[I, O, E, M](
+async def apreflight[I, O, E, M](
     spec: Evaluation[I, O, E, M],
     *,
     trials: int | None = None,
@@ -63,6 +64,31 @@ async def preflight[I, O, E, M](
         "reporters": [r.name for r in reporters],
         "tasks_executed": 0,
     }
+
+
+def preflight[I, O, E, M](
+    spec: Evaluation[I, O, E, M],
+    *,
+    trials: int | None = None,
+    concurrency: int | None = None,
+    limits: ReadLimits | None = None,
+    max_executions: int = 50_000,
+    resolver: Resolver | None = None,
+    reporters: Sequence[Reporter] = (),
+) -> JsonObject:
+    return run_sync(
+        "mic.preflight()",
+        "mic.apreflight",
+        lambda: apreflight(
+            spec,
+            trials=trials,
+            concurrency=concurrency,
+            limits=limits,
+            max_executions=max_executions,
+            resolver=resolver,
+            reporters=reporters,
+        ),
+    )
 
 
 async def arun[I, O, E, M](
@@ -224,16 +250,10 @@ def run[I, O, E, M](
     timeout: float | None = None,
     resolver: Resolver | None = None,
 ) -> RunResult:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        pass
-    else:
-        raise ConfigurationError(
-            "mic.run() cannot run inside an event loop; use 'await mic.arun(...)'"
-        )
-    return asyncio.run(
-        arun(
+    return run_sync(
+        "mic.run()",
+        "mic.arun",
+        lambda: arun(
             spec,
             output=output,
             trials=trials,
@@ -244,5 +264,5 @@ def run[I, O, E, M](
             max_executions=max_executions,
             timeout=timeout,
             resolver=resolver,
-        )
+        ),
     )
