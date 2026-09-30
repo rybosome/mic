@@ -7,39 +7,17 @@ maintainer actions, not automatic consequences of merging a PR. The distribution
 describes project maturity; this workflow does not currently accept prerelease
 version suffixes.
 
-## One-time setup
-
-1. On PyPI, verify the maintainer account's email, enable two-factor authentication,
-   and save recovery codes. Confirm that `mic-evals` is available or owned by you.
-2. In GitHub repository settings, create an environment named `pypi`. Require your
-   approval, leave **Prevent self-review** unchecked for solo maintenance, and
-   disable administrator bypass. Restrict deployments to selected **tags** matching
-   `v*`, with no branch rule. Required reviewers on Free, Pro, and Team plans are
-   available for public repositories only; configure this before the first release.
-3. Register a PyPI GitHub Trusted Publisher with owner `rybosome`, repository `mic`,
-   workflow filename `release.yml` (not its directory path), and environment `pypi`.
-   For a new project use a pending publisher with project name `mic-evals`. It creates
-   the project on first upload but does not reserve the name.
-
-No PyPI API token, GitHub environment secret, or manual bootstrap upload is needed.
-Keep GitHub Actions enabled; the workflow declares its own minimum permissions.
-Setup references: [PyPI pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
-and [GitHub environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
-
 ## Prepare and rehearse
 
-1. Finish intended changes, including README examples and known limitations. The
-   README is also the PyPI description. Review the first release's contents for
-   private material before making the repository or distributions public.
-2. Set the version in `pyproject.toml`, run `uv lock`, and commit both files if changed.
+1. Set the version in `pyproject.toml`, run `uv lock`, and commit both files if changed.
    Follow [verification](verification.md), including build and packaging checks.
    Merge the reviewed release preparation to `main`; do not develop on a release tag.
-3. In GitHub Actions, select **Release → Run workflow**, choose `main`, and enter the
+2. In GitHub Actions, select **Release → Run workflow**, choose `main`, and enter the
    proposed tag, e.g. `v0.1.0`. This checks the selected commit against `origin/main`
    and the proposed version; the tag need not exist yet. It runs the full shared CI,
    compatibility matrix, metadata checks, and clean-install checks of both the built
    wheel and a wheel rebuilt from the source distribution.
-4. Inspect the successful run and its `package-artifacts` and `verification-evidence`
+3. Inspect the successful run and its `package-artifacts` and `verification-evidence`
    artifacts. `release.json` records the commit and upload hashes. Download the
    `release-distributions` artifact if you want to inspect the exact upload files.
 
