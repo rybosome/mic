@@ -21,7 +21,10 @@ JSONL = re.search(r"```jsonl\n(.*?)```", README, re.DOTALL).group(1)
 
 def test_readme_matches_executable_example_and_fixture() -> None:
     example = (ROOT / "examples/ticket_eval.py").read_text(encoding="utf-8")
-    assert example.split("\n\n", 1)[1] == PYTHON_BLOCKS[0]
+    assert example.split("\n\n", 1)[1] == PYTHON_BLOCKS[0], (
+        "README.md's complete Python example and examples/ticket_eval.py have drifted. "
+        "Update both together, keeping the example file's module docstring."
+    )
     assert (ROOT / "examples/fixtures/tickets.jsonl").read_text(encoding="utf-8") == JSONL
 
 
