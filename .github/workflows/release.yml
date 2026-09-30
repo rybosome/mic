@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Candidate version tag to validate, without creating it (verify only)
+        required: true
+        type: string
+        default: v0.1.0
+
+permissions:
+  contents: read
+
+# Never interrupt an upload. Rehearsals do not occupy the publication queue.
+concurrency:
+  group: release-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      revision: ${{ steps.validate.outputs.revision }}
+    steps:
+      - name: Check out exact triggering revision and history
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate version, main ancestry, and release tag
+        id: validate
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          args=(source --tag "$RELEASE_TAG")
+          if [[ "$EVENT_NAME" == release ]]; then
+            args+=(--require-tag)
+          fi
+          python3 scripts/verify_release.py "${args[@]}"
+          printf 'revision=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify release revision
+    needs: candidate
+    uses: ./.github/workflows/ci.yml
+    with:
+      revision: ${{ needs.candidate.outputs.revision }}
+
+  publish:
+    name: Publish verified distributions
+    needs: verify
+    # Manual rehearsals can never publish, even when run on a release tag.
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mic-evals/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download this run's verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-distributions
+          path: dist/
+      - name: Publish to PyPI with attestations
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          attestations: true
+          skip-existing: false

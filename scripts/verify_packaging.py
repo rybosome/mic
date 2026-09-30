@@ -201,7 +201,9 @@ def main():
     try:
         assert project.get("dependencies", []) == [], "Core pyproject dependencies must be empty"
         evidence.update(verify_archives(wheel, sdist))
-        venv.EnvBuilder(with_pip=False).create(isolated)
+        # Managed macOS Pythons locate libpython relative to the real executable;
+        # copying that executable alone can produce an unusable environment.
+        venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt").create(isolated)
         python = isolated / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         mic = isolated / ("Scripts/mic.exe" if os.name == "nt" else "bin/mic")
         uv = shutil.which("uv")
