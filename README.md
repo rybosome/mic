@@ -45,6 +45,7 @@ import mic
 ## Define a dataset
 ##
 
+
 class Ticket(BaseModel):
     subject: str
     body: str
@@ -76,6 +77,7 @@ def tickets() -> list[mic.RawCase]:
         ),
     ]
 
+
 ##
 ## Define scoring
 ##
@@ -86,6 +88,7 @@ def accuracy(
     ctx: mic.ScoreContext[Ticket, Classification, Classification, mic.JsonObject],
 ) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
+
 
 ##
 ## Define the task
@@ -163,7 +166,7 @@ This makes 15 classifier calls. Inspect individual trials as well as the mean:
 one message that fails intermittently deserves attention even if the average looks
 good. Repetition gives you more observations, not proof of statistical significance.
 
-Change the prompt or model in `classify_ticket`, run again into a fresh directory,
+Change the prompt or model in `classify`, run again into a fresh directory,
 and review both reports against the same labeled cases. Keep the evaluation set
 representative rather than tuning only to these three examples.
 
