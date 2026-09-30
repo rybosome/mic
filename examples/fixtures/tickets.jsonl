@@ -1,0 +1,3 @@
+{"id":"upload","input":"The app closes whenever I upload a PDF.","expected":"bug"}
+{"id":"export","input":"Can you add an option to export invoices?","expected":"feature"}
+{"id":"invoice","input":"Where can I download last month's invoice?","expected":"question"}
