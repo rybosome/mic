@@ -7,6 +7,7 @@ import pytest
 
 from mic.errors import ConfigurationError
 from mic.reporters.braintrust import BraintrustReporter
+from tests.runtime.artifact_contract import assert_artifact
 
 from ._fixtures import sample
 
@@ -71,6 +72,7 @@ async def test_braintrust_prepare_is_read_only_and_report_preserves_evidence() -
     await reporter.prepare()
     assert sdk.calls == []
     result = await reporter.report(manifest, cases)
+    assert_artifact("common-v2#/$defs/braintrustResult", result)
     assert result["flushed"] is True
     assert result["rows"] == 2
     assert sdk.calls[0]["set_current"] is False

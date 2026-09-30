@@ -102,6 +102,8 @@ The manifest records input/expected/metadata and output schemas, selection, logi
 source-module/framework hashes, versions, metrics, failures, and export status.
 It intentionally omits environment dumps. Full evaluated values remain available.
 Code provenance's framework hash covers Python sources throughout the `mic` package.
+The [artifact reference](artifacts.md) specifies field shapes, partial states, and
+machine-readable schemas for the current format.
 Reports embed case data, and exception text and provenance may be sensitive. Read
 [sensitive evidence and persistence failures](reporting.md#sensitive-evidence-and-sharing)
 before sharing reports or enabling remote export.

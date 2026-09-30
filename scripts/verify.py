@@ -21,6 +21,9 @@ def main() -> int:
     python = sys.executable
     environment = os.environ.copy()
     environment["COVERAGE_FILE"] = str(evidence / ".coverage")
+    # A failed collection/export must never inherit a previous run's coverage PASS.
+    for name in (".coverage", "coverage.json", "coverage-gates.json", "tests.xml"):
+        (evidence / name).unlink(missing_ok=True)
     checks = [
         (
             "tests",
@@ -42,6 +45,16 @@ def main() -> int:
             [python, "-m", "coverage", "json", "-o", ".artifacts/verification/coverage.json"],
         ),
         ("coverage_report", [python, "-m", "coverage", "report", "--show-missing"]),
+        (
+            "coverage_gates",
+            [
+                python,
+                "scripts/check_coverage.py",
+                ".artifacts/verification/coverage.json",
+                "--output",
+                ".artifacts/verification/coverage-gates.json",
+            ],
+        ),
         ("strict_typing", [python, "-m", "pyright", "--pythonpath", python]),
         ("authoring_typing", [python, "scripts/verify_typing.py"]),
         ("lint", [python, "-m", "ruff", "check", "src", "tests", "examples", "scripts"]),
@@ -90,6 +103,8 @@ def main() -> int:
                     ).hexdigest()
     for name in ("pyproject.toml", "uv.lock"):
         sources[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    for path in sorted((root / "docs/artifact-schemas").glob("*.json")):
+        sources[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
     test_counts = {}
     junit = evidence / "tests.xml"
     if junit.exists():
@@ -114,6 +129,7 @@ def main() -> int:
         "test_counts": test_counts,
         "coverage": {
             "report": "coverage.json",
+            "gates": "coverage-gates.json",
             "scope": "mic Python code exercised in the pytest process; subprocess CLI and Node DOM tests run separately",
         },
         "versions": versions,

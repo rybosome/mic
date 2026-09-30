@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/run-v2.schema.json",
+  "title": "Mic v2 run manifest",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "mic-run-v2"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "dataset": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "rows": {
+              "const": 0
+            }
+          },
+          "required": [
+            "name",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$ref": "common-v2.schema.json#/$defs/dataset"
+        }
+      ]
+    },
+    "options": {
+      "oneOf": [
+        {
+          "type": "object",
+          "maxProperties": 0
+        },
+        {
+          "$ref": "common-v2.schema.json#/$defs/options"
+        }
+      ]
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "planned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "planned",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "additionalProperties": false
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "common-v2.schema.json#/$defs/scoreStats"
+      }
+    },
+    "latency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "maxProperties": 0
+        },
+        {
+          "type": "object",
+          "properties": {
+            "task_ms": {
+              "$ref": "common-v2.schema.json#/$defs/stats"
+            },
+            "scoring_ms": {
+              "$ref": "common-v2.schema.json#/$defs/stats"
+            },
+            "total_ms": {
+              "$ref": "common-v2.schema.json#/$defs/stats"
+            }
+          },
+          "required": [
+            "task_ms",
+            "scoring_ms",
+            "total_ms"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "$ref": "common-v2.schema.json#/$defs/error"
+      }
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "$ref": "common-v2.schema.json#/$defs/gate"
+      }
+    },
+    "reporting": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "const": "dataset.jsonl"
+        },
+        "cases": {
+          "const": "cases.jsonl"
+        },
+        "report": {
+          "const": "report.html"
+        }
+      },
+      "required": [
+        "dataset",
+        "cases",
+        "report"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "oneOf": [
+        {
+          "type": "object",
+          "maxProperties": 0
+        },
+        {
+          "$ref": "common-v2.schema.json#/$defs/code"
+        }
+      ]
+    },
+    "exit_code": {
+      "enum": [
+        0,
+        1,
+        2,
+        130
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "name",
+    "status",
+    "started_at",
+    "ended_at",
+    "duration_ms",
+    "dataset",
+    "options",
+    "counts",
+    "scores",
+    "latency",
+    "failures",
+    "gates",
+    "reporting",
+    "artifacts",
+    "provenance",
+    "exit_code"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "running"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              0
+            ]
+          },
+          "ended_at": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              0
+            ]
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "cancelled"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "exit_code": {
+            "enum": [
+              130
+            ]
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "output_schema"
+        ],
+        "properties": {
+          "dataset": {
+            "$ref": "common-v2.schema.json#/$defs/dataset"
+          },
+          "options": {
+            "$ref": "common-v2.schema.json#/$defs/options"
+          },
+          "provenance": {
+            "$ref": "common-v2.schema.json#/$defs/code"
+          }
+        }
+      }
+    }
+  ]
+}
