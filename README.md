@@ -18,11 +18,10 @@ trials, and local evidence. No hosted evaluation platform is required.
 Suppose you're using an LLM to sort support messages into bugs, feature requests,
 and questions. Before changing its prompt or model, give yourself a repeatable check.
 
-The concise API below is not yet available in the published 0.1.0. With Python
-3.12+, install from a checkout of this repository to try it before the next release:
+With Python 3.12+, install Mic and the SDK used by this example:
 
 ```console
-python -m pip install ".[pydantic]" openai
+python -m pip install "mic-evals[pydantic]" openai
 ```
 
 Mic's core has no third-party runtime dependencies. This example opts into Pydantic
