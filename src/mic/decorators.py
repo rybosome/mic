@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import inspect
+from collections.abc import Awaitable, Callable, Sequence
+from functools import wraps
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
+from .errors import ConfigurationError
 from .models import (
     CaseSchema,
     Dataset,
@@ -16,6 +19,8 @@ from .models import (
     Scoring,
     SourceFactory,
     Task,
+    TaskContext,
+    TaskResult,
 )
 from .schema import Schema
 from .schema import schema as native_schema
@@ -107,6 +112,55 @@ def scorer(
     return decorate
 
 
+type _InputTask[I, O] = Callable[[I], O | TaskResult[O] | Awaitable[O | TaskResult[O]]]
+
+
+class _TaskDecorator[I, O, E, M](Protocol):
+    @overload
+    def __call__(self, fn: _InputTask[I, O]) -> Evaluation[I, O, E, M]: ...
+
+    @overload
+    def __call__(self, fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]: ...
+
+
+def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Task[I, O, E, M]:
+    try:
+        parameters = tuple(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError) as exc:
+        raise ConfigurationError("Task must have an inspectable signature") from exc
+    positional = [p for p in parameters if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    if len(positional) not in (1, 2) or any(
+        p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+        or (p.kind == p.KEYWORD_ONLY and p.default is p.empty)
+        for p in parameters
+    ):
+        raise ConfigurationError(
+            "Task must accept (input) or (context, input); variadic parameters and "
+            "required keyword-only parameters are not supported"
+        )
+    if len(positional) == 2:
+        return cast(Task[I, O, E, M], fn)
+
+    input_task = cast(_InputTask[I, O], fn)
+    # Normalize once, retaining provenance and the callback pool's async dispatch.
+    # Never probe by invoking a task or retry a TypeError raised by its body.
+    if inspect.iscoroutinefunction(fn):
+
+        @wraps(input_task)
+        async def async_task(ctx: TaskContext[E, M], value: I) -> O | TaskResult[O]:
+            return await cast(Awaitable[O | TaskResult[O]], input_task(value))
+
+        return async_task
+
+    @wraps(input_task)
+    def sync_task(
+        ctx: TaskContext[E, M], value: I
+    ) -> O | TaskResult[O] | Awaitable[O | TaskResult[O]]:
+        return input_task(value)
+
+    return sync_task
+
+
 def eval[I, O, E, M](
     *,
     name: str,
@@ -115,14 +169,14 @@ def eval[I, O, E, M](
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
-) -> Callable[[Task[I, O, E, M]], Evaluation[I, O, E, M]]:
-    def decorate(fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
+) -> _TaskDecorator[I, O, E, M]:
+    def decorate(fn: _InputTask[I, O] | Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
         return Evaluation(
             name,
             dataset,
             _schema_for(output),
             tuple(scorers),
-            fn,
+            _contextual_task(fn),
             trials,
             concurrency,
         )

@@ -68,7 +68,7 @@ def test_missing_null_and_extension_data_remain_distinct(tmp_path):
         [{"id": "missing", "input": None}, {"id": "null", "input": None, "expected": None}],
         schema=mic.case_schema(input=object, expected=object, expected_policy="optional"),
         scorers=[nullable],
-        task=lambda *_: mic.TaskResult(None, {"custom": [True, None]}),
+        task=lambda _value: mic.TaskResult(None, {"custom": [True, None]}),
     )
     result = mic.run(spec, output=tmp_path, reporters=[CustomReporter()])
     manifest, rows, cases = assert_directory(tmp_path)
@@ -93,7 +93,7 @@ def test_failure_and_empty_run_contracts(tmp_path, phase):
     if phase == "task":
         spec = replace(spec, function=broken)
     elif phase == "schema":
-        spec = evaluation([row()], output=int, task=lambda *_: "invalid integer")
+        spec = evaluation([row()], output=int, task=lambda _value: "invalid integer")
     elif phase == "scorer":
         spec = replace(spec, scorers=(*spec.scorers, mic.scorer(name="broken")(broken)))
     elif phase == "gate":
@@ -132,7 +132,9 @@ async def test_cancelled_contracts_include_unstarted_work(tmp_path, phase):
         entered.set()
         await asyncio.Event().wait()
 
-    spec = evaluation([row(), row(2, id="b")], task=wait if phase == "task" else None)
+    spec = evaluation(
+        [row(), row(2, id="b")], task=(lambda _value: wait()) if phase == "task" else None
+    )
     reporters = []
     if phase == "dataset":
         spec = replace(spec, dataset=replace(spec.dataset, factory=wait))

@@ -100,7 +100,7 @@ def classify_ticket(ticket: Ticket) -> mic.TaskResult[Decision]:
     output=Decision,
     scorers=[label_score, evidence_score],
 )
-def classify(ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket) -> mic.TaskResult[Decision]:
+def classify(ticket: Ticket) -> mic.TaskResult[Decision]:
     return classify_ticket(ticket)
 
 
@@ -110,7 +110,5 @@ def classify(ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket) -> mic.Ta
     output=Decision,
     scorers=[label_score, evidence_score],
 )
-def classify_file(
-    ctx: mic.TaskContext[Decision, Metadata], ticket: Ticket
-) -> mic.TaskResult[Decision]:
+def classify_file(ticket: Ticket) -> mic.TaskResult[Decision]:
     return classify_ticket(ticket)

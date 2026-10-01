@@ -4,13 +4,28 @@ import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from .errors import ConfigurationError, MissingExpectedError
 from .schema import Schema
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
+
+_I = TypeVar("_I")
+_O = TypeVar("_O")
+_TaskE = TypeVar("_TaskE")
+
+# Python 3.12 has no stdlib TypeVar defaults. Keep defaults visible to type
+# checkers, and fill omitted runtime arguments in the two public context classes.
+if TYPE_CHECKING:
+    from typing_extensions import TypeVar as DefaultTypeVar
+
+    _E = DefaultTypeVar("_E", default=_O)
+    _M = DefaultTypeVar("_M", default=JsonObject)
+else:
+    _E = TypeVar("_E")
+    _M = TypeVar("_M")
 
 
 @dataclass(frozen=True)
@@ -62,28 +77,46 @@ class ReadLimits:
 
 
 @dataclass(frozen=True)
-class TaskContext[E, M]:
+class TaskContext(Generic[_TaskE, _M]):
     case_id: str
     trial: int
-    expected: E | Missing
-    metadata: M | None
+    expected: _TaskE | Missing
+    metadata: _M | None
 
-    def require_expected(self) -> E:
+    if not TYPE_CHECKING:
+
+        def __class_getitem__(cls, parameters: object) -> object:
+            args = parameters if isinstance(parameters, tuple) else (parameters,)
+            if len(args) == 1:
+                args = (*args, JsonObject)
+            return super().__class_getitem__(args)
+
+    def require_expected(self) -> _TaskE:
         if isinstance(self.expected, Missing):
             raise MissingExpectedError(f"Case {self.case_id!r} has no expected value")
         return self.expected
 
 
 @dataclass(frozen=True)
-class ScoreContext[I, O, E, M]:
-    input: I
-    output: O
-    expected: E | Missing
-    metadata: M | None
+class ScoreContext(Generic[_I, _O, _E, _M]):
+    input: _I
+    output: _O
+    expected: _E | Missing
+    metadata: _M | None
     case_id: str = ""
     trial: int = 1
 
-    def require_expected(self) -> E:
+    if not TYPE_CHECKING:
+
+        def __class_getitem__(cls, parameters: object) -> object:
+            args = parameters if isinstance(parameters, tuple) else (parameters,)
+            if len(args) == 2:
+                args = (*args, args[1], JsonObject)
+            elif len(args) == 3:
+                args = (*args, JsonObject)
+            return super().__class_getitem__(args)
+
+    def require_expected(self) -> _E:
         if isinstance(self.expected, Missing):
             raise MissingExpectedError(f"Case {self.case_id!r} has no expected value")
         return self.expected

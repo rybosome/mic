@@ -102,7 +102,7 @@ def test_initialization_failure_starts_no_tasks_or_exports(tmp_path, monkeypatch
 
         monkeypatch.setattr(Path, method, fail)
     result = mic.run(
-        evaluation([row()], task=lambda *_: calls.append(True)),
+        evaluation([row()], task=lambda _value: calls.append(True)),
         output=destination,
         reporters=[reporter],
     )
@@ -149,7 +149,7 @@ async def test_cancellation_survives_persistence_failure(tmp_path, monkeypatch, 
         finally:
             cleaned.append(True)
 
-    spec = evaluation([row()], task=wait if phase == "task" else None)
+    spec = evaluation([row()], task=(lambda _value: wait()) if phase == "task" else None)
     reporters = []
     if phase == "dataset":
         spec = replace(spec, dataset=replace(spec.dataset, factory=wait))

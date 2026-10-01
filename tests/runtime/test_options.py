@@ -43,7 +43,7 @@ def test_v2_manifest_omits_removed_authoring_options(tmp_path):
 )
 def test_invalid_execution_config_never_calls_source_or_task(tmp_path, setting, value):
     calls = []
-    spec = evaluation([row()], task=lambda *args: calls.append("task"))
+    spec = evaluation([row()], task=lambda _value: calls.append("task"))
     spec = replace(spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source")))
     with pytest.raises(mic.ConfigurationError):
         mic.run(spec, output=tmp_path, **{setting: value})
@@ -58,7 +58,9 @@ def test_invalid_gate_never_calls_task(tmp_path, require):
     calls = []
     with pytest.raises(mic.ConfigurationError):
         mic.run(
-            evaluation([row()], task=lambda *_: calls.append(1)), output=tmp_path, require=require
+            evaluation([row()], task=lambda _value: calls.append(1)),
+            output=tmp_path,
+            require=require,
         )
     assert not calls
 
@@ -106,7 +108,7 @@ async def test_sync_entrypoints_give_async_host_instructions():
 
 def test_resource_caps_prevent_all_task_execution(tmp_path):
     calls = []
-    spec = evaluation([row(), row(2, id="b")], task=lambda *_: calls.append(1), trials=2)
+    spec = evaluation([row(), row(2, id="b")], task=lambda _value: calls.append(1), trials=2)
     with pytest.raises(mic.ConfigurationError, match="max_executions"):
         mic.run(spec, output=tmp_path, max_executions=3)
     assert calls == []
@@ -115,7 +117,7 @@ def test_resource_caps_prevent_all_task_execution(tmp_path):
 
 async def test_apreflight_reads_source_once_and_executes_no_callbacks():
     calls = []
-    spec = evaluation([row()], task=lambda *_: calls.append("task"))
+    spec = evaluation([row()], task=lambda _value: calls.append("task"))
     spec = replace(
         spec, dataset=replace(spec.dataset, factory=lambda: calls.append("source") or [row()])
     )
@@ -142,7 +144,7 @@ def test_required_scorer_rejects_unlabeled_cases_before_execution(tmp_path):
     schema = mic.case_schema(input=int, expected=int, expected_policy="optional")
     with pytest.raises(mic.DatasetError, match="require expected"):
         mic.run(
-            evaluation([{"input": 1}], schema=schema, task=lambda *_: calls.append(1)),
+            evaluation([{"input": 1}], schema=schema, task=lambda _value: calls.append(1)),
             output=tmp_path,
         )
     assert calls == []

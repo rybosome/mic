@@ -111,7 +111,7 @@ def test_typed_metadata_is_projected_merged_and_hydrated(tmp_path):
         [row(metadata={"label": "row"})],
         schema=schema,
         output=int,
-        task=lambda *_: mic.TaskResult(1, {"label": "task", "model": "fixture"}),
+        task=lambda _value: mic.TaskResult(1, {"label": "task", "model": "fixture"}),
         scorers=[check],
     )
     result = mic.run(spec, output=tmp_path)

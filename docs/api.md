@@ -23,12 +23,64 @@ passes strict Pyright.
   named by the scorer. Return a finite `float`/`int`, `None` when inapplicable, or
   `Score(value, metadata)` when the score needs JSON metadata.
 - `@eval(name=..., dataset=..., output=..., scorers=[...], trials=1, concurrency=10)`
-  accepts a task `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
+  accepts a task `(input: I) -> O | TaskResult[O]` or
+  `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
   `output` and `metadata` keys are not unpacked.
 - Descriptors expose their stable `name`; callback storage is an implementation detail.
   Their constructors/decorators do not call provider SDKs or authenticate. Python module
   import is still ordinary code execution, not a sandbox.
+
+## Callback signatures and context types
+
+Use an input-only task unless it needs execution context:
+
+```python
+def classify(ticket: Ticket) -> Classification:
+    ...
+
+
+def classify_with_context(
+    ctx: mic.TaskContext[Classification], ticket: Ticket
+) -> Classification:
+    ...
+```
+
+These are alternative callback signatures for the same `@mic.eval(...)` decorator.
+At decoration time Mic inspects the signature once: one positional parameter receives
+input; two receive context then input. Parameter names and annotations do not select
+the calling convention. Both positional-only and ordinary positional parameters are
+supported, including positional parameters with defaults; Mic supplies every positional
+parameter. Optional keyword-only parameters keep their defaults. Required keyword-only
+parameters, `*args`, `**kwargs`, and other positional arities are rejected immediately
+with `ConfigurationError`. Bound methods, partials, and decorators that preserve their
+signature with `functools.wraps` are supported when their exposed signature fits these rules.
+Uninspectable signatures are rejected. Mic never calls a task to probe its signature or
+retries it after `TypeError`. Sync callbacks retain bounded thread execution; async
+callbacks are awaited, including awaitables returned by synchronous functions.
+
+Both forms retain static input/output checks, output validation, and `TaskResult`
+metadata support. Input-only tasks receive no context or expected answer. Context-aware
+tasks can access case ID, trial, expected value, and metadata; avoid leaking the reference
+answer into the system under evaluation.
+
+Context type parameters have defaults:
+
+| Annotation | Equivalent full annotation |
+| --- | --- |
+| `TaskContext[E]` | `TaskContext[E, JsonObject]` |
+| `ScoreContext[I, O]` | `ScoreContext[I, O, O, JsonObject]` |
+| `ScoreContext[I, O, E]` | `ScoreContext[I, O, E, JsonObject]` |
+
+Use `TaskContext[E, M]` or `ScoreContext[I, O, E, M]` for custom metadata.
+`E` is the expected type, not necessarily the output type; `M` is case metadata.
+The shorthands work on Python 3.12+ without adding core runtime dependencies.
+`@mic.scorer(name=...)` already defaults to `requires_expected=True`; opt out explicitly
+for reference-free scorers. `require_expected()` returns the typed reference value or
+raises if missing; the context's `expected` attribute still includes `Missing` in its type.
+
+The signature restrictions are a tightening of the earlier callback contract: replace
+variadic task callbacks with an explicit input or context/input signature.
 
 ## Presence, metadata and stable identity
 
