@@ -18,10 +18,11 @@ trials, and local evidence. No hosted evaluation platform is required.
 Suppose you're using an LLM to sort support messages into bugs, feature requests,
 and questions. Before changing its prompt or model, give yourself a repeatable check.
 
-With Python 3.12+, install Mic and the SDK used by this example:
+The concise API below is not yet available in the published 0.1.0. With Python
+3.12+, install from a checkout of this repository to try it before the next release:
 
 ```console
-python -m pip install "mic-evals[pydantic]" openai
+python -m pip install ".[pydantic]" openai
 ```
 
 Mic's core has no third-party runtime dependencies. This example opts into Pydantic
@@ -83,10 +84,8 @@ def tickets() -> list[mic.RawCase]:
 ##
 
 
-@mic.scorer(name="accuracy", requires_expected=True)
-def accuracy(
-    ctx: mic.ScoreContext[Ticket, Classification, Classification, mic.JsonObject],
-) -> float:
+@mic.scorer(name="accuracy")
+def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
 
 
@@ -96,9 +95,7 @@ def accuracy(
 
 
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
-def classify(
-    ctx: mic.TaskContext[Classification, mic.JsonObject], ticket: Ticket
-) -> Classification:
+def classify(ticket: Ticket) -> Classification:
     from openai import OpenAI
 
     # Create the client only when the task runs, and close it after the call.
@@ -122,7 +119,9 @@ def classify(
 answer and the model's structured output. The SDK derives its output schema from
 that class and parses the response into it. Mic validates dataset values and task
 outputs against the same types, so the scorer works with objects, not JSON parsing
-or string cleanup.
+or string cleanup. `ScoreContext[Ticket, Classification]` defaults the expected
+value to the output type and metadata to a JSON object. Scorers require expected
+values by default; use `requires_expected=False` only for reference-free metrics.
 
 A valid but wrong label scores `0`; the right label scores `1`. Invalid output or
 no parsed classification (for example, a refusal) is an execution failure, not a
@@ -217,7 +216,9 @@ The same pattern applies beyond classification: score extracted fields, check an
 agent's result against a rubric, or compute a metric for an ML prediction. Tasks
 and scorers are Python functions, so they can call your existing code. Sync and
 async functions are supported; scripts can use `mic.run()` and notebooks can use
-`await mic.arun()` instead of the CLI.
+`await mic.arun()` instead of the CLI. Tasks normally take just their input; when
+you need the case ID, trial number, or metadata, use `(ctx, input)` with a typed
+`TaskContext`. See [callback signatures and context types](docs/api.md#callback-signatures-and-context-types).
 
 - **Structured data:** use ordinary dataclasses for inputs, outputs, and expected
   values; see the [structured example](examples/structured.py) and [schema guide](docs/schemas.md).

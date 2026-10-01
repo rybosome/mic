@@ -25,6 +25,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INSPECT_INSTALL = """import importlib.util, importlib.metadata, json, mic, sys
+from typing import get_args
+
+assert get_args(mic.TaskContext[int]) == (int, mic.JsonObject)
+assert get_args(mic.ScoreContext[str, int]) == (str, int, int, mic.JsonObject)
+assert get_args(mic.ScoreContext[str, int, bool]) == (str, int, bool, mic.JsonObject)
 
 def present(name):
     try:

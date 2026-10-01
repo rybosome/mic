@@ -60,7 +60,7 @@ def test_noncallable_scorer_fails_before_source_access(tmp_path):
 
 def test_dataset_snapshot_write_failure_saves_failed_manifest_without_tasks(tmp_path):
     calls = []
-    spec = evaluation([row()], task=lambda *_: calls.append("task"))
+    spec = evaluation([row()], task=lambda _value: calls.append("task"))
 
     def source():
         snapshot = tmp_path / "dataset.jsonl"

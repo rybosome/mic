@@ -48,10 +48,8 @@ def tickets() -> list[mic.RawCase]:
 ##
 
 
-@mic.scorer(name="accuracy", requires_expected=True)
-def accuracy(
-    ctx: mic.ScoreContext[Ticket, Classification, Classification, mic.JsonObject],
-) -> float:
+@mic.scorer(name="accuracy")
+def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
 
 
@@ -61,9 +59,7 @@ def accuracy(
 
 
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
-def classify(
-    ctx: mic.TaskContext[Classification, mic.JsonObject], ticket: Ticket
-) -> Classification:
+def classify(ticket: Ticket) -> Classification:
     from openai import OpenAI
 
     # Create the client only when the task runs, and close it after the call.
