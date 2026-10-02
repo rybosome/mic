@@ -4,12 +4,14 @@ import asyncio
 import copy
 import threading
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
 from mic.errors import DatasetError
 from mic.models import ReadLimits
-from mic.providers.bigquery import BigQueryHandle, BigQueryLoader, BigQueryParameter
+from mic.providers.bigquery import BigQueryHandle, BigQueryParameter
+from tests.providers.helpers import open_bigquery
 
 
 class QueryAPI:
@@ -122,7 +124,7 @@ def source():
 @pytest.mark.asyncio
 async def test_actual_sdk_dry_run_pagination_preserves_server_order_and_native_types(actual_sdk):
     client, api, closed = actual_sdk
-    async with BigQueryLoader(client_factory=lambda _: client).open(
+    async with partial(open_bigquery, client_factory=lambda _: client)(
         source(), limits=ReadLimits()
     ) as read:
         rows = [row async for row in read.rows()]
@@ -153,11 +155,11 @@ async def test_actual_sdk_rejects_dry_run_permission_error_before_execution(actu
 
     client, api, closed = actual_sdk
     api.dry_failure = Forbidden("fixture dataset permission denied")
-    with pytest.raises(DatasetError, match="fixture dataset permission denied"):
-        async with BigQueryLoader(client_factory=lambda _: client).open(
+    with pytest.raises(DatasetError, match="BigQuery dataset read failed"):
+        async with partial(open_bigquery, client_factory=lambda _: client)(
             source(), limits=ReadLimits()
-        ):
-            pytest.fail("dry-run rejection must prevent opening a dataset")
+        ) as read:
+            _ = [row async for row in read.rows()]
     assert len(api.calls) == 1
     assert closed == [True]
 
@@ -168,8 +170,8 @@ async def test_actual_sdk_later_page_error_cancels_job_and_closes_owned_client(a
 
     client, api, closed = actual_sdk
     api.page_failure = Forbidden("fixture page permission denied")
-    with pytest.raises(DatasetError, match="fixture page permission denied"):
-        async with BigQueryLoader(client_factory=lambda _: client).open(
+    with pytest.raises(DatasetError, match="BigQuery dataset read failed"):
+        async with partial(open_bigquery, client_factory=lambda _: client)(
             source(), limits=ReadLimits()
         ) as read:
             _ = [row async for row in read.rows()]
@@ -184,7 +186,7 @@ async def test_actual_sdk_repeated_cancel_joins_page_before_cancelling_job(actua
     api.block_page = True
 
     async def consume():
-        async with BigQueryLoader(client_factory=lambda _: client).open(
+        async with partial(open_bigquery, client_factory=lambda _: client)(
             source(), limits=ReadLimits()
         ) as read:
             return [row async for row in read.rows()]

@@ -11,7 +11,6 @@ from typing import cast
 from .._async import run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import Evaluation, JsonObject, ReadLimits, RunResult
-from ..providers.base import Resolver
 from ..reporters.base import Reporter
 from .artifacts import (
     atomic_json,
@@ -43,7 +42,6 @@ async def apreflight[I, O, E, M](
     concurrency: int | None = None,
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
-    resolver: Resolver | None = None,
     reporters: Sequence[Reporter] = (),
 ) -> JsonObject:
     options = resolve_options(
@@ -55,7 +53,7 @@ async def apreflight[I, O, E, M](
     )
     output_schema = describe(spec.output, "output")
     await prepare_reporters(reporters)
-    snapshot = await load_dataset(spec.dataset, limits=limits, resolver=resolver)
+    snapshot = await load_dataset(spec.dataset, limits=limits)
     check_cases(spec, snapshot, options)
     return {
         "name": spec.name,
@@ -76,7 +74,6 @@ def preflight[I, O, E, M](
     concurrency: int | None = None,
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
-    resolver: Resolver | None = None,
     reporters: Sequence[Reporter] = (),
 ) -> JsonObject:
     return run_sync(
@@ -88,7 +85,6 @@ def preflight[I, O, E, M](
             concurrency=concurrency,
             limits=limits,
             max_executions=max_executions,
-            resolver=resolver,
             reporters=reporters,
         ),
     )
@@ -105,7 +101,6 @@ async def arun[I, O, E, M](
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
     timeout: float | None = None,
-    resolver: Resolver | None = None,
 ) -> RunResult:
     """Run once and persist proof. Setup errors raise; case/report/gate failures return results.
 
@@ -158,7 +153,7 @@ async def arun[I, O, E, M](
         manifest["options"] = options.as_json()
         manifest["output_schema"] = describe(spec.output, "output")
         await prepare_reporters(reporters)
-        snapshot = await load_dataset(spec.dataset, limits=limits, resolver=resolver)
+        snapshot = await load_dataset(spec.dataset, limits=limits)
         manifest["dataset"] = snapshot.summary
         write_dataset(destination / "dataset.jsonl", snapshot.rows)
         check_cases(spec, snapshot, options)
@@ -259,7 +254,6 @@ def run[I, O, E, M](
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
     timeout: float | None = None,
-    resolver: Resolver | None = None,
 ) -> RunResult:
     return run_sync(
         "mic.run()",
@@ -274,6 +268,5 @@ def run[I, O, E, M](
             limits=limits,
             max_executions=max_executions,
             timeout=timeout,
-            resolver=resolver,
         ),
     )

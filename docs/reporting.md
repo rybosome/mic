@@ -105,12 +105,6 @@ substring selection. The invocation directory is added to the import path so loc
 validates data and configuration without task calls or experiment writes.
 `--timeout` on `run` applies to the entire trial, including task and scorers.
 
-`mic estimate examples.provider_equivalence:bigquery_data` invokes the selected
-factory once and asks its registered loader for a dry-run cost estimate. It reads
-no rows and executes no tasks. Dataset and evaluation selectors are both accepted.
-Unsupported providers fail clearly with exit 2. `--dataset-timeout` also bounds
-this command. BigQuery authentication is still required for the dry run.
-
 ## Optional Braintrust export
 
 Install `mic-evals[braintrust]` and set `BRAINTRUST_API_KEY`, then explicitly add

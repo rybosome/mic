@@ -11,11 +11,10 @@ from mic._runtime.materialization import load_dataset
 from mic.decorators import case_schema, dataset
 from mic.errors import DatasetError
 from mic.models import ReadLimits
-from mic.providers import Resolver
-from mic.providers.bigquery import BigQueryHandle, BigQueryLoader
-from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
-from mic.providers.files import FileHandle, FileLoader
-from mic.providers.memory import MemoryLoader
+from mic.providers.bigquery import BigQueryHandle
+from mic.providers.braintrust import BraintrustHandle
+from mic.providers.files import FileHandle
+from mic.sources import DatasetSource
 
 ROWS = [
     {"id": "case-001", "input": "nested text", "expected": "label", "metadata": {"team": "x"}},
@@ -53,19 +52,20 @@ class Client:
 
 
 def source_fixture(kind, rows, tmp_path):
-    resolver = Resolver()
     if kind == "memory":
-        return rows, resolver
+        return rows
     if kind == "file":
         path = tmp_path / "fixture.jsonl"
         path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
-        resolver.register(FileHandle, FileLoader())
-        return FileHandle(path), resolver
+        return FileHandle(path)
     if kind == "bigquery":
-        resolver.register(
-            BigQueryHandle, BigQueryLoader(client=Client(rows), config_factory=lambda h, d: d)
+        return BigQueryHandle(
+            "billing-project",
+            "SELECT * FROM cases ORDER BY id",
+            "US",
+            client=Client(rows),
+            config_factory=lambda h, d: d,
         )
-        return BigQueryHandle("billing-project", "SELECT * FROM cases ORDER BY id", "US"), resolver
     if kind == "braintrust":
         responses = iter(
             [
@@ -77,13 +77,12 @@ def source_fixture(kind, rows, tmp_path):
                 httpx.Response(200, content=b""),
             ]
         )
-        resolver.register(
-            BraintrustHandle,
-            BraintrustLoader(
-                api_key="fixture-only", transport=httpx.MockTransport(lambda _: next(responses))
-            ),
+        return BraintrustHandle(
+            "dataset-id",
+            "pinned-version",
+            api_key="fixture-only",
+            transport=httpx.MockTransport(lambda _: next(responses)),
         )
-        return BraintrustHandle("dataset-id", "pinned-version"), resolver
     raise AssertionError(kind)
 
 
@@ -91,12 +90,12 @@ def source_fixture(kind, rows, tmp_path):
 async def test_all_builtin_sources_have_identical_normalized_snapshot(tmp_path):
     snapshots = []
     for kind in ("memory", "file", "bigquery", "braintrust"):
-        source, resolver = source_fixture(kind, ROWS, tmp_path)
+        source = source_fixture(kind, ROWS, tmp_path)
         descriptor = dataset(
             name="same",
             schema=case_schema(input=str, expected=str | None, expected_policy="optional"),
         )(lambda: source)
-        snapshots.append(await load_dataset(descriptor, resolver=resolver))
+        snapshots.append(await load_dataset(descriptor))
     assert all(snapshot.rows == ROWS for snapshot in snapshots)
     assert len({snapshot.summary["digest"] for snapshot in snapshots}) == 1
     assert snapshots[1].cases[0].provenance["line"] == 1
@@ -106,33 +105,29 @@ async def test_all_builtin_sources_have_identical_normalized_snapshot(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["memory", "file", "bigquery", "braintrust"])
 async def test_every_source_rejects_duplicate_identity_before_execution(kind, tmp_path):
-    source, resolver = source_fixture(kind, [ROWS[0], ROWS[0]], tmp_path)
+    source = source_fixture(kind, [ROWS[0], ROWS[0]], tmp_path)
     descriptor = dataset(name="duplicate", schema=case_schema(input=str, expected=str))(
         lambda: source
     )
     with pytest.raises(DatasetError, match="Duplicate case id"):
-        await load_dataset(descriptor, resolver=resolver)
+        await load_dataset(descriptor)
 
 
 @pytest.mark.asyncio
-async def test_decorator_registered_fifth_source_needs_no_core_change():
+async def test_fifth_source_needs_no_registration_or_core_change():
     @dataclass(frozen=True)
-    class FixtureHandle:
+    class FixtureHandle(DatasetSource):
         provider: str = "custom-fixture"
 
-    resolver = Resolver()
-
-    @resolver.loader(FixtureHandle)
-    class FixtureLoader:
-        def open(self, handle, *, limits):
-            assert handle.provider == "custom-fixture"
-            return MemoryLoader().open(ROWS, limits=limits)
+        def read(self, ctx):
+            ctx.set_provenance(provider=self.provider)
+            yield from ROWS
 
     descriptor = dataset(
         name="custom",
         schema=case_schema(input=str, expected=str | None, expected_policy="optional"),
     )(lambda: FixtureHandle())
-    result = await load_dataset(descriptor, resolver=resolver, limits=ReadLimits())
+    result = await load_dataset(descriptor, limits=ReadLimits())
     assert result.rows == ROWS
 
 
@@ -172,7 +167,7 @@ async def test_nested_native_dataclass_shapes_have_equal_digest_across_all_sourc
     ]
     snapshots = []
     for kind in ("memory", "file", "bigquery", "braintrust"):
-        source, resolver = source_fixture(kind, rows, tmp_path)
+        source = source_fixture(kind, rows, tmp_path)
         descriptor = dataset(
             name="nested",
             schema=case_schema(
@@ -180,7 +175,7 @@ async def test_nested_native_dataclass_shapes_have_equal_digest_across_all_sourc
                 expected=dict[str, int],
             ),
         )(lambda: source)
-        snapshot = await load_dataset(descriptor, resolver=resolver)
+        snapshot = await load_dataset(descriptor)
         assert snapshot.cases[0].input == NativePayload(
             [NativeEntry("one", 2)],
             ("a", "b"),
@@ -207,7 +202,7 @@ async def test_nested_native_schema_failure_has_field_path_for_every_source(kind
             "expected": "x",
         }
     ]
-    source, resolver = source_fixture(kind, rows, tmp_path)
+    source = source_fixture(kind, rows, tmp_path)
     descriptor = dataset(
         name="nested-invalid",
         schema=case_schema(
@@ -216,4 +211,4 @@ async def test_nested_native_schema_failure_has_field_path_for_every_source(kind
         ),
     )(lambda: source)
     with pytest.raises(DatasetError, match=r"entries\[0\].count"):
-        await load_dataset(descriptor, resolver=resolver)
+        await load_dataset(descriptor)

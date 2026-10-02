@@ -2,8 +2,6 @@
 
 import asyncio
 import threading
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, TypedDict
 
@@ -12,12 +10,13 @@ import pytest
 from pydantic import BaseModel, Field
 
 from mic._runtime.materialization import load_dataset
+from mic._runtime.sources import open_source
 from mic.decorators import case_schema, dataset
 from mic.errors import ConfigurationError, DatasetError
 from mic.integrations.pydantic import pydantic_schema
 from mic.models import MISSING, RawCase, ReadLimits
-from mic.providers import Resolver
-from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
+from mic.providers.braintrust import BraintrustHandle
+from mic.sources import DatasetSource
 
 
 def definition(source, *, input=str, expected=str, expected_policy="required", map_row=None):
@@ -34,35 +33,26 @@ async def test_custom_read_iterator_finally_runs_before_loader_context_exit(stop
     events = []
 
     @dataclass(frozen=True)
-    class Handle:
+    class Handle(DatasetSource):
         provider: str = "review"
 
-    class Read:
-        provenance = {"provider": "review"}
-
-        async def rows(self):
+        async def read(self, ctx):
+            ctx.set_provenance(provider="review")
             try:
-                yield {"input": "valid" if stop == "prefix" else 123, "expected": "yes"}
-                yield {"input": "next", "expected": "yes"}
+                try:
+                    yield {"input": "valid" if stop == "prefix" else 123, "expected": "yes"}
+                    yield {"input": "next", "expected": "yes"}
+                finally:
+                    events.append("iterator closed")
             finally:
-                events.append("iterator closed")
+                events.append("source closed")
 
-    class Loader:
-        @asynccontextmanager
-        async def open(self, handle, *, limits) -> AsyncGenerator[Read]:
-            try:
-                yield Read()
-            finally:
-                events.append("loader closed")
-
-    resolver = Resolver()
-    resolver.register(Handle, Loader())
     if stop == "prefix":
-        await load_dataset(definition(Handle()), resolver=resolver, limit=1)
+        await load_dataset(definition(Handle()), limit=1)
     else:
         with pytest.raises(DatasetError):
-            await load_dataset(definition(Handle()), resolver=resolver)
-    assert events == ["iterator closed", "loader closed"]
+            await load_dataset(definition(Handle()))
+    assert events == ["iterator closed", "source closed"]
 
 
 @pytest.mark.asyncio
@@ -83,9 +73,9 @@ async def test_braintrust_prefix_closes_stream_without_closing_injected_client()
         lambda _: httpx.Response(200, stream=body, headers={"x-bt-cursor": "cursor"})
     )
     async with httpx.AsyncClient(transport=transport) as client:
-        resolver = Resolver()
-        resolver.register(BraintrustHandle, BraintrustLoader(client=client, api_key="fixture"))
-        await load_dataset(definition(BraintrustHandle("id", "pinned")), resolver=resolver, limit=1)
+        await load_dataset(
+            definition(BraintrustHandle("id", "pinned", client=client, api_key="fixture")), limit=1
+        )
         assert body.closed
         assert not client.is_closed
 
@@ -304,7 +294,7 @@ async def test_cancelled_sync_factory_cleans_up_its_late_returned_iterator():
     assert sources[0].closed
 
 
-def test_resolver_unknown_and_duplicate_registration_are_explicit():
-    resolver = Resolver()
-    with pytest.raises(ConfigurationError, match="No dataset loader registered"):
-        resolver.open(object(), limits=ReadLimits())
+async def test_unknown_sources_fail_explicitly():
+    with pytest.raises(ConfigurationError, match="DatasetSource or iterable"):
+        async with open_source(object(), limits=ReadLimits()) as read:
+            _ = [row async for row in read.rows()]

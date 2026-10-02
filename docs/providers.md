@@ -2,8 +2,8 @@
 
 Dataset factories return passive handles or fresh Python iterables. The dataset
 schema and optional `map_row` function define evaluation cases; a source does not
-choose the task, output schema, scorer, or reporting destination. All adapters use
-the same resolver and bounded materializer. Importing their modules does not
+choose the task, output schema, scorer, or reporting destination. Built-in and external sources implement
+exactly the same public `mic.DatasetSource` contract. No registration is needed. Importing their modules does not
 initialize cloud SDKs or discover credentials.
 
 The core package has **no runtime dependencies**. Native dataclass and Python
@@ -76,7 +76,7 @@ FileHandle("fixtures/cases.json", format="json")
 `FileHandle(path, format=None)` accepts `Path` or string. `.jsonl` and `.ndjson`
 extensions select JSONL; other paths default to a JSON array. An explicit format
 is either `"json"` or `"jsonl"`. JSONL is read one bounded line at a time. A JSON
-array is read into a buffer bounded by `max_bytes` before parsing.
+array is framed and parsed one bounded record at a time, without loading the whole array.
 
 Blank JSONL lines are skipped. Malformed JSON, duplicate object keys, nonfinite
 numbers, non-object rows, and invalid source provenance fail with file/line
@@ -118,7 +118,7 @@ named Standard SQL scalar types supported by this adapter (`STRING`, `INT64`,
 finite JSON values; dates and decimals may use SDK-supported string forms.
 Nested STRUCT parameters are not implemented.
 
-The loader performs a dry run with Standard SQL and query cache disabled, checks
+The source performs a dry run with Standard SQL and query cache disabled, checks
 the server's statement type is exactly `SELECT`, and rejects estimated bytes over
 the cap before submitting the executable query. Scripts, DML, and DDL fail this
 check. The execution also carries `maximum_bytes_billed`. SQL identifiers belong
@@ -132,9 +132,9 @@ project/location, a stable query identity hash, dry-run estimate, job ID, and
 available actual processing/billing/cache metadata. Query values are evidence;
 do not put credentials in SQL parameters.
 
-`await BigQueryLoader().estimate(handle)` performs only the dry run. Inject a
-`client` to retain caller ownership, or a `client_factory` to transfer client
-ownership to the loader. `config_factory(handle, dry_run)` supports SDK-free fake
+There is no separate estimation API or CLI command. The mandatory dry run is an
+execution safety check. Supply `client=` on the handle to retain caller ownership,
+or `client_factory=` to transfer client ownership to the source. `config_factory(handle, dry_run)` supports SDK-free fake
 client tests. Owned clients close on success, error, and cancellation; query
 cancellation is best effort.
 
@@ -167,12 +167,12 @@ from the fixture owner. `api_url` defaults to `BRAINTRUST_API_URL`, then
 `https://api.braintrust.dev`. Explicit handles support EU or self-hosted data
 planes. URLs require HTTPS, except localhost HTTP for tests.
 
-Set `BRAINTRUST_API_KEY`, or supply `BraintrustLoader(api_key=...)`. Read settings
+Set `BRAINTRUST_API_KEY`, or supply `BraintrustHandle(..., api_key=...)`. Read settings
 only when opening the dataset. The default source client is owned and closed by
-the loader. Injected clients implement the small async `ReadClient` protocol and
+the source. Injected clients implement the small async `ReadClient` protocol and
 remain caller-owned; an existing `httpx.AsyncClient` satisfies that protocol.
 The `transport=` convenience parameter still supports explicit HTTPX mock
-transports when HTTPX is separately installed, and creates a loader-owned client.
+transports when HTTPX is separately installed, and creates a source-owned client.
 Production defaults never import HTTPX. The API key does not enter dataset
 provenance and is passed explicitly without a fallback to unrelated `.netrc`
 credentials.
@@ -189,10 +189,12 @@ Each `/btql` request has a structured query selecting existing dataset rows in
 `_pagination_key` order, a bounded page limit, `fmt="jsonl"`, and the pinned
 top-level `version`. The reader streams response bytes and reads cursors from
 `x-bt-cursor` or `x-amz-meta-bt_cursor`. The documented cursor flow ends at an
-empty page without a cursor. A nonempty page missing its cursor, a repeated
+empty page without a cursor. A nonempty page missing its cursor, an immediately repeated
 cursor, an empty page with a cursor, or a response exceeding its requested page
 limit fails explicitly. The adapter probes for an extra row when the configured
 row cap is reached, distinguishing a complete dataset from silent truncation.
+Cursor tracking uses constant space; longer cursor cycles are ultimately bounded
+by the row/byte/deadline caps rather than retaining every historical cursor.
 
 Records preserve input, expected presence/null, metadata, and physical record ID.
 Provenance retains dataset ID, pinned version, physical record ID, and returned
@@ -260,3 +262,55 @@ The real-SDK transport tests exercise `Client.query`, `QueryJob.result` and
 when the handle timeout is shorter. Mic waits for in-flight SDK calls to finish
 before closing resources; its cooperative dataset deadline cannot force the SDK
 thread to stop. The handle's timeout is therefore not a hard wall-clock cutoff.
+
+## Custom sources
+
+Return a subclass of `mic.DatasetSource` from the dataset factory. Its
+`read(ctx)` returns a synchronous or asynchronous iterator of raw records. The
+same interface powers every built-in source; sources do not register loaders or
+import Mic runtime internals.
+
+```python
+from collections.abc import Iterator
+from dataclasses import dataclass
+
+import mic
+
+@dataclass(frozen=True)
+class RangeSource(mic.DatasetSource):
+    stop: int
+
+    def read(self, ctx: mic.ReadContext) -> Iterator[object]:
+        ctx.set_provenance(provider="range", stop=self.stop)
+        for value in range(self.stop):
+            yield mic.RawCase(input=value, expected=value * 2)
+
+@mic.dataset(input=int, expected=int)
+def numbers() -> RangeSource:
+    return RangeSource(100)
+```
+
+Keep construction passive. Create clients and open files inside `read`, with
+`try/finally`, `with`, or `async with` owning their lifetime. Mic closes the
+iterator on exhaustion or early exit; synchronous iteration and cleanup use the
+same serialized worker thread. Async implementations must make their own blocking
+SDK calls cancellation-safe. Exceptions terminate the source; a provider which
+can recover at a record boundary may yield `mic.RecordError` with a safe message.
+The current consumer aborts on that event; the streaming runtime adds skip policy.
+
+`ReadContext.limits` exposes the read caps. `set_provenance(**values)` validates
+and copies finite JSON; cumulative provenance is limited to 64 KiB. The context
+counts raw rows centrally, independently of provider implementation. Providers
+can call `account_bytes(n)` and `check_record_bytes(n)` for physical/decoded size
+checks. These do not claim to measure HTTP wire bytes. Normalized case sizes are
+also checked centrally.
+
+`ctx.open_binary(path)` owns a file and accounts bytes as read. Its digest is
+explicitly a consumed prefix until EOF is observed. A parser can read ahead of
+the last yielded record, so this digest is not a logical dataset digest.
+
+See [the YAML example](../examples/yaml_source.py) for a multi-document source
+with resource cleanup, duplicate-key/alias rejection, and bounded nesting. YAML
+is an example dependency, not a core or provider extra. Each YAML document is
+parsed in memory; total raw bytes remain capped, and Mic validates each yielded
+record. It is not a general-purpose sandbox for hostile YAML.

@@ -1,12 +1,14 @@
 import asyncio
 import json
+from functools import partial
 
 import httpx
 import pytest
 
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import MISSING, RawCase, ReadLimits
-from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
+from mic.providers.braintrust import BraintrustHandle
+from tests.providers.helpers import open_braintrust
 
 
 def page(rows, cursor=None, header="x-bt-cursor"):
@@ -32,8 +34,8 @@ def handle(**kwargs):
 
 
 async def collect(fixture, *, source=None, limits=ReadLimits()):
-    loader = BraintrustLoader(api_key="test-key", transport=httpx.MockTransport(fixture))
-    async with loader.open(source or handle(), limits=limits) as read:
+    loader = partial(open_braintrust, api_key="test-key", transport=httpx.MockTransport(fixture))
+    async with loader(source or handle(), limits=limits) as read:
         rows = [row async for row in read.rows()]
         return rows, read.provenance
 
@@ -172,15 +174,15 @@ async def test_injected_client_stays_open_and_owned_transport_closes():
 
     transport = Transport(lambda _: page([]))
     async with httpx.AsyncClient(transport=transport) as client:
-        loader = BraintrustLoader(client=client, api_key="test-key")
-        async with loader.open(handle(), limits=ReadLimits()) as read:
+        loader = partial(open_braintrust, client=client, api_key="test-key")
+        async with loader(handle(), limits=ReadLimits()) as read:
             assert [row async for row in read.rows()] == []
         assert not client.is_closed
         assert not transport.closed
     assert transport.closed
     transport = Transport(lambda _: httpx.Response(500))
     with pytest.raises(DatasetError):
-        async with BraintrustLoader(api_key="test", transport=transport).open(
+        async with partial(open_braintrust, api_key="test", transport=transport)(
             handle(), limits=ReadLimits()
         ) as read:
             _ = [row async for row in read.rows()]
@@ -212,7 +214,7 @@ async def test_timeout_and_cancel_close_response():
     def timeout(_):
         raise httpx.ReadTimeout("fixture deadline")
 
-    with pytest.raises(DatasetError, match="fixture deadline"):
+    with pytest.raises(DatasetError, match="read failed on page 1"):
         await collect(timeout)
 
 
@@ -223,10 +225,10 @@ async def test_no_credentials_or_xact_id_fails_before_http(monkeypatch):
     def forbidden(_):
         pytest.fail("HTTP request before configuration validation")
 
-    loader = BraintrustLoader(transport=httpx.MockTransport(forbidden))
+    loader = partial(open_braintrust, transport=httpx.MockTransport(forbidden))
     with pytest.raises(ConfigurationError, match="API_KEY"):
-        async with loader.open(handle(), limits=ReadLimits()):
-            pass
+        async with loader(handle(), limits=ReadLimits()) as read:
+            _ = [row async for row in read.rows()]
     for xact_id in ("", "latest", "head"):
         with pytest.raises(ConfigurationError, match="pinned xact_id"):
             await collect(forbidden, source=BraintrustHandle("id", xact_id))
@@ -237,8 +239,8 @@ async def test_no_credentials_or_xact_id_fails_before_http(monkeypatch):
 @pytest.mark.asyncio
 async def test_malformed_key_is_rejected_without_exposing_it_in_exception():
     key = "credential-value\naccidental-newline"
-    loader = BraintrustLoader(api_key=key)
+    loader = partial(open_braintrust, api_key=key)
     with pytest.raises(ConfigurationError, match="one non-whitespace ASCII token") as error:
-        async with loader.open(handle(), limits=ReadLimits()):
-            pass
+        async with loader(handle(), limits=ReadLimits()) as read:
+            _ = [row async for row in read.rows()]
     assert "credential-value" not in str(error.value)

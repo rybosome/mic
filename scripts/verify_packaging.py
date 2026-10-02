@@ -255,7 +255,7 @@ def main():
         assert Path(installed["mic_path"]).is_relative_to(isolated), "mic imported from source tree"
         evidence["isolated_environment"] = installed
         help_output = run("module_entrypoint", [python, "-m", "mic", "--help"], cwd=work)
-        assert "estimate" in help_output and "preflight" in help_output
+        assert "estimate" not in help_output and "preflight" in help_output
         definitions = json.loads(
             run("list_structured", [mic, "list", "examples.structured", "--json"])
         )

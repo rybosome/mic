@@ -28,26 +28,12 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 | --- | --- | --- |
 | `list` | One or more modules | List definitions; no dataset reads or task calls. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
-| `estimate` | Dataset or evaluation selector | Request a supported provider's read-cost estimate; no rows read or tasks called. Prints JSON. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
 | `run` | Evaluation selector | Execute trials/scorers and save local evidence. Optional `--json` prints the final manifest. |
 | `report` | Run directory or `run.json` | Render existing evidence as standalone HTML; no evaluation rerun. |
 
 Inspection, preflight, and runs read cloud datasets when selected. Each invocation
 loads its own snapshot; preflight does not cache data for a later run.
-
-### Estimate a BigQuery read
-
-After replacing the README's dataset factory with its BigQuery variant:
-
-```console
-mic estimate ticket_eval:tickets --dataset-timeout 60
-```
-
-This contacts BigQuery using your configured credentials and submits a dry run;
-it does not read rows or call the task. Currently only the BigQuery provider
-supports estimation. Memory, files, and Braintrust sources reject `estimate`.
-See [BigQuery setup and cost controls](providers.md#bigquery).
 
 ## Execution controls and limits
 
@@ -68,7 +54,7 @@ or prefix-selection flag.
 | `--max-rows` | `inspect`, `preflight`, `run` | 10,000 rows. |
 | `--max-bytes` | `inspect`, `preflight`, `run` | 67,108,864 bytes. |
 | `--max-record-bytes` | `inspect`, `preflight`, `run` | 1,048,576 bytes per record. |
-| `--dataset-timeout` | `inspect`, `estimate`, `preflight`, `run` | 60 seconds; dataset materialization deadline, or estimate deadline for `estimate`. |
+| `--dataset-timeout` | `inspect`, `preflight`, `run` | 60 seconds; dataset materialization deadline. |
 
 Safety caps fail visibly instead of silently truncating the dataset. Use
 `inspect --limit N` when you intentionally want to inspect only a prefix.

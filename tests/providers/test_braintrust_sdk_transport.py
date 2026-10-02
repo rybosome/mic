@@ -4,12 +4,14 @@ import asyncio
 import importlib
 import json
 import threading
+from functools import partial
 
 import pytest
 
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import ReadLimits
-from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
+from mic.providers.braintrust import BraintrustHandle
+from tests.providers.helpers import open_braintrust
 
 
 @pytest.fixture
@@ -104,7 +106,7 @@ async def test_default_sdk_reads_pinned_pages_and_closes_owned_session(requests_
         page_size=1,
         timeout=0.5,
     )
-    async with BraintrustLoader(api_key="fixture-key").open(source, limits=ReadLimits()) as read:
+    async with partial(open_braintrust, api_key="fixture-key")(source, limits=ReadLimits()) as read:
         rows = [row async for row in read.rows()]
     assert len(rows) == 1 and rows[0].expected is None
     assert all(value.raw.closed or value.raw.released for value in (first, terminal))
@@ -125,7 +127,7 @@ async def test_sdk_http_errors_close_without_buffering_bodies(
     value = response(requests_sdk, b"x" * 1_000_000, status=status)
     _, closed = capture_session(monkeypatch, requests_sdk, [value])
     with pytest.raises(DatasetError, match=match):
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
         ) as read:
             _ = [row async for row in read.rows()]
@@ -138,7 +140,7 @@ async def test_sdk_response_byte_cap_stops_streaming_and_closes(requests_sdk, mo
     value = response(requests_sdk, b"x" * 1_000_000)
     _, closed = capture_session(monkeypatch, requests_sdk, [value])
     with pytest.raises(DatasetError, match="max_bytes=20"):
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits(max_bytes=20)
         ) as read:
             _ = [row async for row in read.rows()]
@@ -162,7 +164,7 @@ async def test_sdk_cancelled_response_creation_joins_and_closes(requests_sdk, mo
     monkeypatch.setattr(requests_sdk.Session, "send", send)
 
     async def consume():
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
         ) as read:
             return [row async for row in read.rows()]
@@ -206,7 +208,7 @@ async def test_repeated_cancel_waits_for_late_response_cleanup_before_client_clo
     monkeypatch.setattr(requests_sdk.Session, "send", send)
 
     async def consume():
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
         ) as read:
             return [row async for row in read.rows()]
@@ -258,7 +260,7 @@ async def test_sdk_cancelled_stream_read_finishes_before_resources_close(
     _, closed = capture_session(monkeypatch, requests_sdk, [value])
 
     async def consume():
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
         ) as read:
             return [row async for row in read.rows()]
@@ -286,8 +288,8 @@ async def test_sdk_timeout_closes_client(requests_sdk, monkeypatch):
         raise requests_sdk.exceptions.ReadTimeout("fixture read deadline")
 
     monkeypatch.setattr(requests_sdk.Session, "send", timeout)
-    with pytest.raises(DatasetError, match="fixture read deadline"):
-        async with BraintrustLoader(api_key="fixture").open(
+    with pytest.raises(DatasetError, match="Braintrust read failed on page 1"):
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
         ) as read:
             _ = [row async for row in read.rows()]
@@ -305,7 +307,7 @@ async def test_missing_sdk_fails_with_named_extra(monkeypatch):
 
     monkeypatch.setattr(importlib, "import_module", blocked)
     with pytest.raises(ConfigurationError, match=r"mic-evals\[braintrust\]"):
-        async with BraintrustLoader(api_key="fixture").open(
+        async with partial(open_braintrust, api_key="fixture")(
             BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
-        ):
-            pass
+        ) as read:
+            _ = [row async for row in read.rows()]
