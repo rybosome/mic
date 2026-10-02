@@ -188,6 +188,23 @@ cancellation matters. Source reads and exports also clean up cooperatively.
 Cancellation preserves partial evidence then re-raises `CancelledError`; the CLI
 returns 130. No tasks or scorers are retried automatically.
 
+## Bounded summary models
+
+`Statistics`, `TrialSummary`, `TaskSummary`, `EvaluationSummary`, and
+`RequirementResult` are immutable public models for streaming evaluation summaries.
+Statistics contain `count`, `mean`, `min`, and `max`; empty observations have a zero
+count and `None` for the remaining fields. Task and score mappings are copied and
+read-only. No model retains individual cases or observations.
+
+`planned` counts admitted trials. Terminal outcomes are mutually exclusive:
+`completed`, `task_failed`, `scoring_failed`, and `cancelled`. `scoring_skipped`
+counts trials with at least one explicit `None` score and can overlap an outcome.
+Timing statistics omit phases that never started. Global means weight observations
+directly, not task means.
+
+These models are the foundation for the streaming runner; the current runner and
+artifact contracts below remain unchanged in this foundation change.
+
 ## Reports and statistics
 
 Every run writes `dataset.jsonl`, `cases.jsonl`, `run.json`, and `report.html`.
