@@ -1,13 +1,14 @@
 """Keep the copy/paste quickstart executable without credentials or model traffic."""
 
 import ast
+import asyncio
 import json
 import re
 import shlex
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -273,3 +274,72 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     assert bug["scores"][0]["metadata"] == {
         "body_length": len("The app closes whenever I upload a PDF."),
     }
+
+
+@pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize("missing_output", [False, True])
+def test_async_task_and_context_examples(quickstart, with_context, missing_output, caplog) -> None:
+    module, _, sync_client = quickstart
+    constructor = MagicMock()
+    sys.modules["openai"].AsyncOpenAI = constructor
+    client = constructor.return_value.__aenter__.return_value
+    client.responses.parse = AsyncMock(
+        side_effect=(
+            (lambda **kwargs: SimpleNamespace(output_parsed=None))
+            if missing_output
+            else sync_client.responses.parse.side_effect
+        )
+    )
+    source = snippet("async-task")
+    if with_context:
+        source = source.replace(
+            "async def classify(ticket: Ticket) -> Classification:\n",
+            snippet("task-context"),
+        )
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    caplog.set_level("INFO", logger="ticket_eval")
+    assert main(["run", "ticket_eval:classify", "--trials", "2", "--output", "async"]) == (
+        1 if missing_output else 0
+    )
+    assert client.responses.parse.await_count == 6
+    assert constructor.return_value.__aexit__.await_count == 6
+    constructor.assert_called_with(timeout=30, max_retries=0)
+    request = client.responses.parse.call_args.kwargs
+    assert request["text_format"] is module.Classification
+    assert request["store"] is False
+    result = json.loads(Path("async/run.json").read_text())
+    assert result["counts"]["failed"] == (6 if missing_output else 0)
+    if with_context:
+        assert {record.getMessage() for record in caplog.records} == {
+            f"case={case} trial={trial}"
+            for case in ("upload", "export", "invoice")
+            for trial in (1, 2)
+        }
+
+
+@pytest.mark.parametrize("async_runner", [False, True])
+@pytest.mark.parametrize("wrong_labels", [False, True])
+def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels) -> None:
+    module, _, client = quickstart
+    if wrong_labels:
+        client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
+            output_parsed=module.Classification(label="feature")
+        )
+    namespace = {}
+    if async_runner:
+        code = compile(
+            snippet("programmatic-arun"),
+            "readme_notebook",
+            "exec",
+            flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+        )
+        asyncio.run(eval(code, namespace))
+    else:
+        with pytest.raises(SystemExit) as outcome:
+            exec(snippet("programmatic-run"), namespace)
+        assert outcome.value.code == (1 if wrong_labels else 0)
+    result = namespace["result"]
+    assert result.exit_code == (1 if wrong_labels else 0)
+    assert result.manifest["counts"]["completed"] == 15
+    assert result.manifest["options"]["concurrency"] == 2
+    assert (result.output_dir / "report.html").is_file()

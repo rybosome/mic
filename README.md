@@ -278,11 +278,61 @@ bugs found; its mean excludes the non-bug cases that return `None`.
 Reference-free metrics use `@mic.scorer(name=..., requires_expected=False)`.
 See [scoring contracts](docs/api.md).
 
+## Tasks: sync, async, and execution context
+
+The quickstart's task accepts a `Ticket` and returns a `Classification`. Mic also
+accepts async tasks and scorers; they can be mixed in the same evaluation.
+
+### Use an async client
+
+Replace the quickstart's task with this async equivalent. OpenAI supports
+[`AsyncOpenAI` with awaited structured-output parsing](https://developers.openai.com/cookbook/examples/partners/eval_driven_system_design/receipt_inspection).
+The dataset, scorer, and CLI commands stay the same.
+
+<!-- snippet: async-task -->
+```python
+@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+async def classify(ticket: Ticket) -> Classification:
+    from openai import AsyncOpenAI
+
+    async with AsyncOpenAI(timeout=30, max_retries=0) as client:
+        response = await client.responses.parse(
+            model="gpt-4.1-mini",
+            instructions=(
+                "Classify the support ticket as "
+                "bug (broken behavior), feature (new capability), or question (how-to)."
+            ),
+            input=ticket.model_dump_json(),
+            text_format=Classification,
+            store=False,
+        )
+        if response.output_parsed is None:
+            raise ValueError("The model did not return a classification.")
+        return response.output_parsed
+```
+
+### Request context when you need it
+
+For case/trial logging, replace the async task's signature with the following
+and add the logging call before its existing body. Keep its decorator unchanged:
+
+<!-- snippet: task-context -->
+```python
+async def classify(ctx: mic.TaskContext[Classification], ticket: Ticket) -> Classification:
+    import logging
+
+    logging.getLogger(__name__).info("case=%s trial=%s", ctx.case_id, ctx.trial)
+```
+
+`Classification` here types the expected answer, not the input. Context also
+exposes case metadata and the reference answer; keep reference answers out of
+the classifier's prompt. Both sync and async tasks accept either `(input)` or
+`(ctx, input)`. See [context types](docs/api.md#callback-signatures-and-context-types).
+
 ## Use the CLI
 
 Run a specific evaluation, control repeated execution, and enforce quality
-thresholds without writing a runner. `ticket_eval:classify` selects the `classify`
-definition in `ticket_eval.py`.
+thresholds without writing a runner.
 
 ### Discover and validate
 
@@ -349,10 +399,43 @@ mic --help
 mic run --help
 ```
 
-Change the prompt or model, rerun, and inspect which cases improved or regressed.
-Tasks and scorers can be sync or async. Use `mic.run()` in scripts or
-`await mic.arun()` in notebooks; request `(ctx, input)` only when your task needs
-execution context. [API reference](docs/api.md)
+## Run from Python
+
+In a separate script, import the evaluation and call `mic.run()`:
+
+<!-- snippet: programmatic-run -->
+```python
+import mic
+from ticket_eval import classify
+
+result = mic.run(
+    classify,
+    trials=5,
+    concurrency=2,
+    timeout=30,
+    require=["accuracy>=0.9"],
+)
+print(result.manifest["scores"])
+print(result.output_dir)
+raise SystemExit(result.exit_code)
+```
+
+In a notebook or async application with an active event loop, use `mic.arun()`:
+
+<!-- snippet: programmatic-arun -->
+```python
+import mic
+from ticket_eval import classify
+
+result = await mic.arun(classify, trials=5, concurrency=2, require=["accuracy>=0.9"])
+result.manifest["scores"]
+```
+
+Either runner supports sync and async tasks. Both save the same evidence as the
+CLI and return a `RunResult`; failed score gates return a nonzero `exit_code`
+rather than raising. Setup errors raise exceptions. Use `output=` for an explicit
+empty directory and `limits=mic.ReadLimits(...)` for dataset safety caps.
+See the [Python execution API](docs/api.md#execution-and-errors) for all options.
 
 ## Notes and documentation
 
