@@ -15,14 +15,28 @@ from mic.cli import main
 
 ROOT = Path(__file__).resolve().parents[2]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-PYTHON_BLOCKS = re.findall(r"```python\n(.*?)```", README, re.DOTALL)
-JSONL = re.search(r"```jsonl\n(.*?)```", README, re.DOTALL).group(1)
+
+
+def snippet(name: str) -> str:
+    match = re.search(
+        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl)\n(.*?)```",
+        README,
+        re.DOTALL,
+    )
+    assert match is not None, f"Missing README snippet: {name}"
+    return match.group(1)
+
+
+QUICKSTART = "\n\n".join(
+    snippet(name) for name in ("quickstart-dataset", "quickstart-scoring", "quickstart-task")
+)
+JSONL = snippet("tickets-jsonl")
 
 
 def test_readme_matches_executable_example_and_fixture() -> None:
     example = (ROOT / "examples/ticket_eval.py").read_text(encoding="utf-8")
-    assert example.split("\n\n", 1)[1] == PYTHON_BLOCKS[0], (
-        "README.md's complete Python example and examples/ticket_eval.py have drifted. "
+    assert example.split("\n\n", 1)[1] == QUICKSTART, (
+        "README.md's assembled quickstart and examples/ticket_eval.py have drifted. "
         "Update both together, keeping the example file's module docstring."
     )
     assert (ROOT / "examples/fixtures/tickets.jsonl").read_text(encoding="utf-8") == JSONL
@@ -45,7 +59,7 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = ModuleType("ticket_eval")
     module.__file__ = str(tmp_path / "ticket_eval.py")
     monkeypatch.setitem(sys.modules, "ticket_eval", module)
-    exec(compile(PYTHON_BLOCKS[0], module.__file__, "exec"), module.__dict__)
+    exec(compile(QUICKSTART, module.__file__, "exec"), module.__dict__)
     return module, constructor, client
 
 
@@ -61,9 +75,11 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     ]
     for command in commands:
         assert main(shlex.split(command)[1:]) == 0, command
-    assert client.responses.parse.call_count == 33  # 3 + 15 + 15; report makes no calls.
-    assert constructor.call_count == 33
-    assert constructor.return_value.__exit__.call_count == 33
+    assert (
+        client.responses.parse.call_count == 21
+    )  # 3 + 15 + 3; inspection/preflight/report make no model calls.
+    assert constructor.call_count == 21
+    assert constructor.return_value.__exit__.call_count == 21
     constructor.assert_called_with(timeout=30, max_retries=0)
     request = client.responses.parse.call_args.kwargs
     assert request["text_format"] is module.Classification
@@ -72,12 +88,16 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     assert request["model"] == "gpt-4.1-mini"
     assert "bug (broken behavior)" in request["instructions"]
     opened.assert_called_once()
-    first = json.loads(Path(".mic/tickets-first/run.json").read_text())
-    repeated = json.loads(Path(".mic/tickets-repeat/run.json").read_text())
+    first = json.loads(Path(".mic/tickets/run.json").read_text())
+    repeated = next(
+        data
+        for path in Path(".mic").rglob("run.json")
+        if (data := json.loads(path.read_text()))["counts"]["completed"] == 15
+    )
     assert first["scores"]["accuracy"]["mean"] == 1
     assert first["counts"]["completed"] == 3
     assert repeated["counts"]["completed"] == 15
-    assert Path(".mic/tickets-first/report.html").is_file()
+    assert Path(".mic/tickets/report.html").is_file()
 
 
 def test_discovery_and_preflight_do_not_create_model_client(quickstart) -> None:
@@ -92,12 +112,12 @@ def test_jsonl_replacement_preserves_dataset_and_scores(quickstart, tmp_path: Pa
     assert main(["run", "ticket_eval:classify", "--output", "native"]) == 0
     (tmp_path / "tickets.jsonl").write_text(JSONL, encoding="utf-8")
     # Apply the README's replacement before its evaluation decorator binds the dataset.
-    tree = ast.parse(PYTHON_BLOCKS[0])
+    tree = ast.parse(QUICKSTART)
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tickets")
-    lines = PYTHON_BLOCKS[0].splitlines(keepends=True)
+    lines = QUICKSTART.splitlines(keepends=True)
     source = (
         "".join(lines[: function.decorator_list[0].lineno - 1])
-        + PYTHON_BLOCKS[1]
+        + snippet("file-dataset")
         + "".join(lines[function.end_lineno :])
     )
     exec(compile(source, module.__file__, "exec"), module.__dict__)
@@ -158,9 +178,80 @@ def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, a
 def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
     module, constructor, _ = quickstart
     # Exercise the reader's schema, not only Pydantic construction in application code.
-    source = PYTHON_BLOCKS[0].replace(
+    source = QUICKSTART.replace(
         'expected=Classification(label="bug")', 'expected={"label": "unknown"}'
     )
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "invalid-data"]) == 2
     constructor.assert_not_called()
+
+
+def test_dataclass_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
+    from dataclasses import is_dataclass
+
+    module, constructor, _ = quickstart
+    source = (
+        "import mic\n"
+        + snippet("dataclasses")
+        + "\n@mic.dataset"
+        + snippet("quickstart-dataset").split("@mic.dataset", 1)[1]
+    )
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    record = json.loads(JSONL.splitlines()[0])
+    ticket = module.tickets.schema.input.validate(record["input"])
+    expected = module.tickets.schema.expected.validate(record["expected"])
+    assert is_dataclass(ticket) and is_dataclass(expected)
+    assert ticket.subject == record["input"]["subject"]
+    assert expected.label == "bug"
+    assert main(["inspect", "ticket_eval:tickets", "--limit", "3"]) == 0
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["bigquery-dataset", "braintrust-dataset"])
+def test_cloud_factory_examples_are_passive(quickstart, name: str) -> None:
+    from mic.providers.bigquery import BigQueryHandle
+    from mic.providers.braintrust import BraintrustHandle
+
+    module, constructor, _ = quickstart
+    exec(compile(snippet(name), module.__file__, "exec"), module.__dict__)
+    handle = module.tickets.factory()
+    if name == "bigquery-dataset":
+        assert isinstance(handle, BigQueryHandle)
+        assert handle.maximum_bytes_billed == 10_000_000
+        assert "STRUCT(subject, body) AS input" in handle.sql
+        assert "STRUCT(label) AS expected" in handle.sql
+        assert "ORDER BY id" in handle.sql
+    else:
+        assert isinstance(handle, BraintrustHandle)
+        assert handle.dataset_id == "your-dataset-id"
+        assert handle.xact_id == "your-pinned-version"
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("miss_bug", [False, True])
+def test_multiple_metrics_metadata_and_nonapplicable_scores(quickstart, miss_bug: bool) -> None:
+    module, _, client = quickstart
+    task = snippet("quickstart-task")
+    task = snippet("multiple-scorers") + task.split("\n", 1)[1]
+    source = snippet("quickstart-dataset") + "\n\n" + snippet("extended-scoring") + "\n\n" + task
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    respond = client.responses.parse.side_effect
+
+    def predict(**kwargs):
+        if miss_bug and json.loads(kwargs["input"])["subject"] == "PDF upload":
+            return SimpleNamespace(output_parsed=module.Classification(label="question"))
+        return respond(**kwargs)
+
+    client.responses.parse.side_effect = predict
+    assert main(["run", "ticket_eval:classify", "--output", "metrics"]) == 0
+    manifest = json.loads(Path("metrics/run.json").read_text())
+    assert manifest["scores"]["accuracy"]["mean"] == pytest.approx(2 / 3 if miss_bug else 1)
+    recall = manifest["scores"]["bug_recall"]
+    assert recall["count"] == 1 and recall["null_count"] == 2
+    assert recall["mean"] == (0 if miss_bug else 1)
+    cases = [json.loads(line) for line in Path("metrics/cases.jsonl").read_text().splitlines()]
+    bug = next(case for case in cases if case["case_id"] == "upload")
+    assert bug["scores"][0]["metadata"] == {
+        "expected": "bug",
+        "predicted": "question" if miss_bug else "bug",
+    }
