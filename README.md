@@ -127,9 +127,7 @@ mic report .mic/tickets --open
 ```
 
 See each ticket, expected answer, prediction, and score in a standalone HTML report;
-JSON/JSONL evidence is saved alongside it. Explicit output directories must be empty.
-Omit `--output` to create a unique one. These three cases are illustrative, not a
-representative benchmark.
+JSON/JSONL evidence is saved alongside it.
 
 ## Datasets: keep the evaluation, change the source
 
@@ -155,8 +153,7 @@ class Classification:
 ```
 
 The quickstart uses optional Pydantic models to share an output schema with OpenAI.
-Both work with Mic's dataset and output schemas; the SDK-specific call above uses
-Pydantic's `model_dump_json()`. See [structured schemas](docs/schemas.md).
+Both work with Mic's dataset and output schemas. See [structured schemas](docs/schemas.md).
 
 ### Local JSONL
 
@@ -242,7 +239,7 @@ See [provider setup and limits](docs/providers.md).
 
 ## Scoring: multiple metrics and supporting evidence
 
-Mic does not bundle built-in scorers. Each scorer produces **one named metric**;
+Each scorer produces **one named metric**;
 attach multiple scorers to an evaluation. Return a number, `mic.Score` with JSON
 metadata, or `None` when a metric does not apply.
 
@@ -273,15 +270,11 @@ Then change the task's decorator to:
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy, bug_recall])
 ```
 
-Overall accuracy can hide missed bugs. `bug_recall` measures the fraction of labeled
-bugs found; its mean excludes the non-bug cases that return `None`.
-Reference-free metrics use `@mic.scorer(name=..., requires_expected=False)`.
 See [scoring contracts](docs/api.md).
 
 ## Tasks: sync, async, and execution context
 
-The quickstart's task accepts a `Ticket` and returns a `Classification`. Mic also
-accepts async tasks and scorers; they can be mixed in the same evaluation.
+Mic accepts async tasks and scorers; they can be mixed in the same evaluation.
 
 ### Use an async client
 
@@ -324,10 +317,7 @@ async def classify(ctx: mic.TaskContext[Classification], ticket: Ticket) -> Clas
     logging.getLogger(__name__).info("case=%s trial=%s", ctx.case_id, ctx.trial)
 ```
 
-`Classification` here types the expected answer, not the input. Context also
-exposes case metadata and the reference answer; keep reference answers out of
-the classifier's prompt. Both sync and async tasks accept either `(input)` or
-`(ctx, input)`. See [context types](docs/api.md#callback-signatures-and-context-types).
+See [context types](docs/api.md#callback-signatures-and-context-types).
 
 ## Use the CLI
 
@@ -352,6 +342,8 @@ Inspection and preflight read datasets, including remote sources.
 ### Control the run
 
 ```console
+# Five trials per case, at most two concurrent tasks, and a cooperative 30-second
+# per-trial timeout.
 mic run ticket_eval:classify \
   --trials 5 \
   --concurrency 2 \
@@ -359,8 +351,7 @@ mic run ticket_eval:classify \
   --output .mic/tickets-v2
 ```
 
-Five trials per case, at most two concurrent tasks, and a cooperative 30-second
-per-trial timeout. See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
+See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
 for safety caps and timeout behavior.
 
 ### Turn scores into pass/fail requirements
@@ -431,10 +422,7 @@ result = await mic.arun(classify, trials=5, concurrency=2, require=["accuracy>=0
 result.manifest["scores"]
 ```
 
-Either runner supports sync and async tasks. Both save the same evidence as the
-CLI and return a `RunResult`; failed score gates return a nonzero `exit_code`
-rather than raising. Setup errors raise exceptions. Use `output=` for an explicit
-empty directory and `limits=mic.ReadLimits(...)` for dataset safety caps.
+Either runner supports sync and async tasks.
 See the [Python execution API](docs/api.md#execution-and-errors) for all options.
 
 ## Notes and documentation
