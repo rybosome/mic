@@ -157,7 +157,7 @@ def test_report_caps_fail_without_truncating_or_replacing_existing_report(tmp_pa
 
     mic.run(evaluation([row(), row(2)]), output=tmp_path)
     target = tmp_path / "report.html"
-    target.write_text("prior report")
+    target.write_text("prior report", encoding="utf-8")
     limits = (
         {"max_cases": 1}
         if cap == "max_cases"
@@ -169,7 +169,7 @@ def test_report_caps_fail_without_truncating_or_replacing_existing_report(tmp_pa
     )
     with pytest.raises(ConfigurationError, match="Report exceeds"):
         write_report(tmp_path, **limits)
-    assert target.read_text() == "prior report"
+    assert target.read_text(encoding="utf-8") == "prior report"
 
 
 @pytest.mark.parametrize("change", ["running", "version", "event", "missing_result"])
@@ -180,9 +180,9 @@ def test_report_rejects_unfinalized_or_unrecognized_evidence(tmp_path, change):
     mic.run(evaluation([row()]), output=tmp_path)
     if change == "running":
         path = tmp_path / "run.json"
-        manifest = json.loads(path.read_text())
+        manifest = json.loads(path.read_text(encoding="utf-8"))
         manifest["status"] = "running"
-        path.write_text(json.dumps(manifest))
+        path.write_text(json.dumps(manifest), encoding="utf-8")
     else:
         path = tmp_path / "events.jsonl"
         event = {"schema_version": "mic-event-v1", "type": "trial_finished"}
@@ -190,7 +190,7 @@ def test_report_rejects_unfinalized_or_unrecognized_evidence(tmp_path, change):
             event["schema_version"] = "wrong"
         if change == "event":
             event["type"] = "unknown"
-        path.write_text(json.dumps(event))
+        path.write_text(json.dumps(event), encoding="utf-8")
     with pytest.raises(ConfigurationError):
         write_report(tmp_path)
     assert not (tmp_path / "report.html").exists()
@@ -221,12 +221,12 @@ def test_report_reader_rejects_malformed_summary_fields(tmp_path, path, value):
 
     mic.run(evaluation([row()]), output=tmp_path)
     file = tmp_path / "run.json"
-    saved = json.loads(file.read_text())
+    saved = json.loads(file.read_text(encoding="utf-8"))
     target = saved
     for key in path[:-1]:
         target = target[next(iter(target)) if key == "first" else key]
     target[path[-1]] = value
-    file.write_text(json.dumps(saved))
+    file.write_text(json.dumps(saved), encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Cannot render"):
         write_report(tmp_path)
     assert not (tmp_path / "report.html").exists()
@@ -255,13 +255,13 @@ def test_report_reader_rejects_malformed_trial_fields(tmp_path, path, value):
 
     mic.run(evaluation([row()]), output=tmp_path)
     file = tmp_path / "events.jsonl"
-    events = [json.loads(line) for line in file.read_text().splitlines()]
+    events = [json.loads(line) for line in file.read_text(encoding="utf-8").splitlines()]
     event = next(e for e in events if e["type"] == "trial_finished")
     target = event
     for key in path[:-1]:
         target = target[key]
     target[path[-1]] = value
-    file.write_text("\\n".join(json.dumps(e) for e in events))
+    file.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Cannot render"):
         write_report(tmp_path)
 
@@ -276,6 +276,6 @@ def test_partial_source_failure_remains_reportable_with_completed_trials(tmp_pat
 
     result = mic.run(evaluation(source()), output=tmp_path)
     assert result.exit_code == 2
-    rendered = write_report(tmp_path).read_text()
+    rendered = write_report(tmp_path).read_text(encoding="utf-8")
     assert "private source body" not in rendered
     assert '"status": "failed"' in rendered
