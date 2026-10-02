@@ -10,7 +10,7 @@ from mic.errors import ConfigurationError
 from mic.reporters.console import format_summary
 from mic.reporters.html import render_report, write_report
 
-from ._fixtures import sample
+from ._fixtures import event_record, sample
 
 
 def test_html_round_trip_is_offline_and_escaped() -> None:
@@ -36,18 +36,7 @@ def test_saved_artifacts_render_without_eval_definition(tmp_path: Path) -> None:
     manifest, cases = sample()
     (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
     (tmp_path / "events.jsonl").write_text(
-        "\n".join(
-            json.dumps(
-                {
-                    "schema_version": "mic-event-v1",
-                    "type": "trial_finished",
-                    "task": case["task"],
-                    "source_id": "source",
-                    "result": case,
-                }
-            )
-            for case in cases
-        ),
+        "\n".join(json.dumps(event_record(case)) for case in cases),
         encoding="utf-8",
     )
     assert write_report(tmp_path) == tmp_path / "report.html"
@@ -90,18 +79,7 @@ def test_report_output_cannot_overwrite_source_artifacts(
     manifest, cases = sample()
     (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
     (tmp_path / "events.jsonl").write_text(
-        "\n".join(
-            json.dumps(
-                {
-                    "schema_version": "mic-event-v1",
-                    "type": "trial_finished",
-                    "task": case["task"],
-                    "source_id": "source",
-                    "result": case,
-                }
-            )
-            for case in cases
-        ),
+        "\n".join(json.dumps(event_record(case)) for case in cases),
         encoding="utf-8",
     )
     (tmp_path / "dataset.jsonl").write_text('{"input":"original"}\n', encoding="utf-8")
@@ -127,18 +105,7 @@ def test_failed_atomic_replacement_preserves_existing_report_and_cleans_temp_fil
     manifest, cases = sample()
     (tmp_path / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
     (tmp_path / "events.jsonl").write_text(
-        "\n".join(
-            json.dumps(
-                {
-                    "schema_version": "mic-event-v1",
-                    "type": "trial_finished",
-                    "task": case["task"],
-                    "source_id": "source",
-                    "result": case,
-                }
-            )
-            for case in cases
-        ),
+        "\n".join(json.dumps(event_record(case)) for case in cases),
         encoding="utf-8",
     )
     destination = tmp_path / "report.html"
@@ -227,3 +194,88 @@ def test_report_rejects_unfinalized_or_unrecognized_evidence(tmp_path, change):
     with pytest.raises(ConfigurationError):
         write_report(tmp_path)
     assert not (tmp_path / "report.html").exists()
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("summary", "trials", "completed"), True),
+        (("summary", "trials", "task_ms", "mean"), "invalid"),
+        (("summary", "tasks", "first", "scores", "first", "count"), 0),
+        (("summary", "tasks", "first", "scores", "first", "min"), None),
+        (("sources", "first", "name"), ""),
+        (("sources", "first", "exhausted"), 1),
+        (("sources", "first", "records_rejected"), -1),
+        (("sources", "first", "error"), {"phase": "source", "type": "Error", "message": []}),
+        (("requirements",), {}),
+        (("requirements",), [{"expression": "", "passed": False}]),
+        (("requirements",), [{"expression": "trials.completed > 0", "passed": 1}]),
+        (("failures",), [{"phase": "task", "type": "Error", "message": None}]),
+        (("sinks",), [{"name": "broken", "status": "unknown", "error": None}]),
+        (("sinks",), [{"name": "broken", "status": "failed", "error": {}}]),
+    ],
+)
+def test_report_reader_rejects_malformed_summary_fields(tmp_path, path, value):
+    import mic
+    from tests.runtime.helpers import evaluation, row
+
+    mic.run(evaluation([row()]), output=tmp_path)
+    file = tmp_path / "run.json"
+    saved = json.loads(file.read_text())
+    target = saved
+    for key in path[:-1]:
+        target = target[next(iter(target)) if key == "first" else key]
+    target[path[-1]] = value
+    file.write_text(json.dumps(saved))
+    with pytest.raises(ConfigurationError, match="Cannot render"):
+        write_report(tmp_path)
+    assert not (tmp_path / "report.html").exists()
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("row_index",), -1),
+        (("trial",), 0),
+        (("case_id",), ""),
+        (("source_id",), False),
+        (("task",), ""),
+        (("result", "case_id"), "different"),
+        (("result", "status"), "unknown"),
+        (("result", "scores"), {}),
+        (("result", "scores"), [{"name": "exact", "value": True}]),
+        (("result", "latency", "task_ms"), -1),
+        (("result", "latency", "scoring_ms"), "invalid"),
+        (("result", "errors"), [{"phase": "task"}]),
+    ],
+)
+def test_report_reader_rejects_malformed_trial_fields(tmp_path, path, value):
+    import mic
+    from tests.runtime.helpers import evaluation, row
+
+    mic.run(evaluation([row()]), output=tmp_path)
+    file = tmp_path / "events.jsonl"
+    events = [json.loads(line) for line in file.read_text().splitlines()]
+    event = next(e for e in events if e["type"] == "trial_finished")
+    target = event
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    file.write_text("\\n".join(json.dumps(e) for e in events))
+    with pytest.raises(ConfigurationError, match="Cannot render"):
+        write_report(tmp_path)
+
+
+def test_partial_source_failure_remains_reportable_with_completed_trials(tmp_path):
+    import mic
+    from tests.runtime.helpers import evaluation, row
+
+    def source():
+        yield row()
+        raise RuntimeError("private source body")
+
+    result = mic.run(evaluation(source()), output=tmp_path)
+    assert result.exit_code == 2
+    rendered = write_report(tmp_path).read_text()
+    assert "private source body" not in rendered
+    assert '"status": "failed"' in rendered

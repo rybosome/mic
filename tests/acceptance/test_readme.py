@@ -368,3 +368,19 @@ def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels
     assert result.summary.trials.completed == 15
     assert result.info.tasks["classify"]["options"]["concurrency"] == 2
     assert result.output_dir is None
+
+
+def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path, monkeypatch):
+    from examples import yaml_source
+
+    module, constructor, _ = quickstart
+    monkeypatch.setitem(sys.modules, "yaml_source", yaml_source)
+    # JSON documents are also valid YAML; reuse the same classifier fixture.
+    (tmp_path / "tickets.yaml").write_text("\n---\n".join(JSONL.splitlines()) + "\n")
+    exec(snippet("yaml-dataset"), module.__dict__)
+    exec(snippet("quickstart-task"), module.__dict__)
+    assert main(["run", "ticket_eval:classify", "--output", "yaml"]) == 0
+    saved = json.loads(Path("yaml/run.json").read_text())
+    assert saved["summary"]["trials"]["completed"] == 3
+    assert constructor.call_count == 3
+    assert next(iter(saved["sources"].values()))["provenance"]["provider"] == "yaml"

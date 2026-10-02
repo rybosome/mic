@@ -237,6 +237,31 @@ def tickets() -> BraintrustHandle:
 Factories describe sources; reading a cloud dataset contacts that service.
 See [provider setup and limits](docs/providers.md).
 
+### Custom streaming sources
+
+A dataset factory can return a generator, async iterator, or a `mic.DatasetSource`.
+Mic reads and validates records as capacity becomes available; it does not first
+save a full snapshot.
+
+For YAML, copy [`yaml_source.py`](examples/yaml_source.py) beside your evaluation
+and install `pyyaml`. Its source reads one YAML document per case, separated by
+`---`, and owns the file until reading ends.
+
+<!-- snippet: yaml-dataset -->
+```python
+from pathlib import Path
+
+from yaml_source import YamlDocuments
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets() -> YamlDocuments:
+    return YamlDocuments(Path(__file__).with_name("tickets.yaml"))
+```
+
+The [source contract](docs/providers.md#custom-sources) is the same one implemented
+by the built-in providers; no registration is required.
+
 ## Scoring: multiple metrics and supporting evidence
 
 Each scorer produces **one named metric**;
@@ -416,7 +441,12 @@ In a notebook or async application with an active event loop, use `mic.arun()`:
 import mic
 from ticket_eval import classify
 
-result = await mic.arun(classify, trials=5, concurrency=2, require=['tasks["classify"].scores["accuracy"].mean>=0.9'])
+result = await mic.arun(
+    classify,
+    trials=5,
+    concurrency=2,
+    require=['tasks["classify"].scores["accuracy"].mean>=0.9'],
+)
 result.summary.tasks["classify"].scores
 ```
 
@@ -424,7 +454,9 @@ Either runner supports sync and async tasks. No files are written by default;
 add `output=".mic/tickets"` to record events and a final summary. Records are
 validated and task/scorer work is pipelined as the source is read. Use
 `on_invalid="skip"` (CLI: `--on-invalid skip`) to skip malformed records.
-See the [Python execution API](docs/api.md#execution-and-errors) for all options.
+Pass a list of evaluations to either runner to share dataset reads and a global
+concurrency limit; the CLI equivalent is `mic run "module:*"`.
+See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
 
 ## Notes and documentation
 

@@ -34,10 +34,10 @@ Test scopes:
 
 | Scope | What it proves |
 | --- | --- |
-| Runtime | Isolation, concurrency bounds, sync/async dispatch, cancellation, failures, gates, metadata, null/missing, artifacts |
+| Runtime | Bounded read-ahead/live records, shared-source suites, global concurrency, isolation, cancellation, record policies, requirements, optional evidence |
 | Schema and datasets | Dataclass inheritance, nested collections, constructors/defaults, optional Pydantic, typed hydration, source identity and limits |
 | Providers | SDK pagination, native parameters/rows, failure and cancellation cleanup, source equivalence |
-| Reporter and CLI | Installed entrypoint, lazy listing, HTML fidelity and atomic writes, escaping/CSP, SDK upload failures and mutation isolation |
+| Sinks and CLI | Installed entrypoint, lazy listing, HTML fidelity and atomic writes, escaping/CSP, SDK upload failures and mutation isolation |
 | Report DOM behavior | Search/filters, keyboard focus and tabs, empty results, null/missing/zero, notices and clipboard fallback |
 | Typing | Valid public authoring accepted; deliberate API mistakes rejected |
 | Live integrations | Provider behavior only when explicit fixture configuration is supplied |
@@ -49,8 +49,8 @@ from live integration tests; see [providers](providers.md) for the two opt-in co
 Live Braintrust experiment export remains a separate manual acceptance check.
 
 Artifact tests inject permission, disk-full, replacement, rendering, and cleanup
-failures through the real runner. They check retained cases, bounded recovery,
-preservation of setup errors/cancellation, and suppression of further exports.
+failures through the real runner. They check retained summaries/events, bounded publication recovery,
+cooperative cancellation, failed-sink isolation, and no task/write replay.
 Atomic-write tests check that partial writes do not replace earlier files. These
 controlled failures do not establish power-loss durability or filesystem-wide
 transactionality; real filesystem behavior still depends on the operating system
@@ -87,8 +87,8 @@ uv run pytest -q tests/runtime/test_artifact_contract.py tests/verification/test
 ## Dataclass and dependency walkthrough
 
 Run `uv run --no-dev mic inspect examples.structured:tickets --limit 2`, then run
-both `examples.structured:classify` and `examples.structured:classify_file`. The
-datasets should have the same logical digest, six completed executions, and means
+both `examples.structured:classify` and `examples.structured:classify_file` with
+`--trials 3`. The datasets should have the same logical digest, six completed executions, and means
 of 1.0 for both metrics.
 
 Run the optional example with:
@@ -100,6 +100,23 @@ uv run --extra pydantic mic run examples.pydantic_models:double
 The input alias `quantity` becomes canonical `count`, while `Field(ge=0)` remains
 enforced. The [schema guide](schemas.md) describes the complete boundary behavior.
 
+## Streaming integration checks
+
+`tests/acceptance/test_streaming_integrations.py` runs BigQuery, Braintrust, and
+the external-style YAML provider through shared-source suite execution, a fake
+Braintrust export destination, current artifact validation, and offline rendering.
+Controlled BigQuery/Braintrust pagination waits for a scorer to run before returning
+the next page, proving the runtime does not materialize the dataset first.
+
+Malformed records at known boundaries exercise both abort and skip. Separate
+provider tests retain fatal transport/size/pagination checks. YAML parser framing
+failures remain fatal; a malformed but parsed case can be skipped.
+
+Live-record and slow-sink tests prove bounded framework retention/read-ahead.
+They do not establish an exact RSS bound for arbitrary user models, SDK pages,
+custom sinks, or hostile parsers. Streaming runs and summaries are bounded;
+explicit HTML rendering intentionally materializes within its configured caps.
+
 ## Human report walkthrough
 
 Generate reports using the README commands, then check:
@@ -107,7 +124,8 @@ Generate reports using the README commands, then check:
 1. The baseline completes three executions and reports an exact mean of 0.667.
 2. The fixed evaluation reports 1.0 against the same dataset digest.
 3. The nullable example distinguishes an unscored value from zero and failure.
-4. The failure example preserves successful cases and shows the failed phase and traceback.
+4. The failure example preserves successful trial events and shows the failed phase
+   and exception type without raw exception bodies or tracebacks.
 5. `--require 'tasks["triage.baseline"].scores["exact"].mean>=0.9'` exits 1 for the baseline without converting low quality
    into an execution error.
 

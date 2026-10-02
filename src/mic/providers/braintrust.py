@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import MISSING, JsonObject, RawCase
-from mic.sources import DatasetSource, ReadContext
+from mic.sources import DatasetSource, ReadContext, RecordError
 
 from ._braintrust.transport import ReadClient as ReadClient
 from ._braintrust.transport import ReadResponse as ReadResponse
@@ -129,7 +129,6 @@ class _BraintrustRead:
         }
 
     def _row(self, data: bytes, page: int) -> RawCase:
-        self.ctx.check_record_bytes(len(data))
         raw = parse_json(data, f"Braintrust page {page}, row {self.ctx.rows_seen}")
         if not isinstance(raw, dict) or "input" not in raw:
             raise DatasetError(
@@ -154,6 +153,14 @@ class _BraintrustRead:
             id=record_id,
             provenance=provenance,
         )
+
+    def _record(self, data: bytes, page: int) -> RawCase | RecordError:
+        # Limits remain fatal; malformed records with a known boundary may be skipped.
+        self.ctx.check_record_bytes(len(data))
+        try:
+            return self._row(data, page)
+        except DatasetError:
+            return RecordError("Malformed Braintrust record")
 
     async def rows(self) -> AsyncGenerator[object]:
         cursor: str | None = None
@@ -200,7 +207,7 @@ class _BraintrustRead:
                                 raise DatasetError(
                                     "Braintrust server exceeded requested page limit"
                                 )
-                            yield self._row(data, page)
+                            yield self._record(data, page)
                         if len(buffer) > self.ctx.limits.max_record_bytes:
                             raise DatasetError(
                                 f"Braintrust page {page}: "
@@ -210,7 +217,7 @@ class _BraintrustRead:
                         rows_in_page += 1
                         if rows_in_page > page_limit:
                             raise DatasetError("Braintrust server exceeded requested page limit")
-                        yield self._row(bytes(buffer), page)
+                        yield self._record(bytes(buffer), page)
                 self.ctx.set_provenance(pages=page, raw_bytes=self.ctx.raw_bytes)
                 if rows_in_page == 0:
                     if next_cursor:

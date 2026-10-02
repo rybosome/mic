@@ -58,7 +58,8 @@ Events are CaseAccepted, RecordRejected, TrialFinished, and SourceFinished.
 Each sink receives independent copied data; source/score summaries are bounded.
 `finish` receives the computational outcome. It cannot know every other sink's
 future finalization result; the returned RunResult adds those receipts afterward.
-Receipt details must be a finite JSON object of at most 64 KiB.
+Receipt details must be a finite JSON object. The entire normalized receipt,
+including any supplied failure, is capped at 64 KiB of UTF-8 JSON.
 
 ## Persistence failures and cancellation
 
@@ -126,6 +127,10 @@ The version-sensitive boundary is covered with local installed-SDK and fake
 transport tests. It does not mutate the process's default experiment/logger.
 Successful flush is the observable export signal, not a promise about later
 server availability. No authenticated live export was performed for this redesign.
+
+Logging failures remain primary if span cleanup also fails; cleanup notes contain
+only the exception type. An uncertain failed write is not flushed or retried as
+part of recovery.
 
 SDK calls are serialized on an owned worker. Cancellation joins that worker.
 A failed or cancelled upload can already have reached the server; Mic cannot

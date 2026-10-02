@@ -239,6 +239,7 @@ class DatasetReader[I, E, M]:
         finally:
             if read is not None:
                 self.provenance = read.provenance
+                self.seen = read.context.rows_seen
             await pool.close()
 
 

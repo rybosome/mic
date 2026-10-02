@@ -25,7 +25,7 @@ function fixture() {
         }},
         trials: {completed: 1, planned: 3, task_failed: 0, scoring_failed: 1, cancelled: 1}
       },
-      sources: {source: {name: 'Synthetic tickets', records_seen: 3, exhausted: true, digest: 'sha256:example'}},
+      sources: {source: {name: 'Synthetic tickets', records_seen: 3, records_accepted: 3, records_rejected: 0, exhausted: true, digest: 'sha256:example'}},
       requirements: [{expression: 'trials.task_failed == 0', passed: false}],
       info: {tasks: {}},
       failures: [{phase: 'setup', type: 'DatasetError', message: 'Setup warning'}],
@@ -44,7 +44,7 @@ function fixture() {
         source_id: 'source', task: 'test', case_id: 'failed', row_index: 1, trial: 1, status: 'scoring_failed', input: 'Beta', expected: null,
         scores: [{ name: 'exact', value: 0 }], provenance: { line: 2 },
         errors: [{ phase: 'scorer', type: 'ValueError', message: '<script>evil()</script>',
-          scorer: 'exact', traceback: 'Traceback: fixture.py:42' }],
+          scorer: 'exact' }],
       },
       {
         source_id: 'source', task: 'test', case_id: 'cancelled', row_index: 2, trial: 1, status: 'cancelled', input: 'Gamma',
@@ -87,7 +87,7 @@ test('summary and case values render as text; zero, null and missing retain mean
   assert.equal(ui.document.querySelectorAll('img').length, 0);
   assert.equal(ui.get('run-status').textContent, 'failed');
   assert.match(ui.get('stats').textContent, /exact0\.0001 numeric · min 0\.000 · max 0\.000/);
-  assert.match(ui.get('stats').textContent, /Quality gates0 \/ 1trials.task_failed == 0/);
+  assert.match(ui.get('stats').textContent, /Requirements0 \/ 1FAIL trials.task_failed == 0/);
   assert.equal(ui.get('selected-name').textContent, 'missing');
   assert.match(ui.get('panel-details').textContent, /ExpectedMissing — no expected valueOutputnull/);
   assert.match(ui.get('panel-details').textContent, /Dataset metadatafalseTask metadata0/);
@@ -139,7 +139,7 @@ test('search includes raw case evidence and composes with status filters, preser
   assert.equal(ui.get('selected-name').textContent, 'cancelled');
   ui.filter('all');
   assert.equal(ui.get('selected-name').textContent, 'cancelled');
-  ui.search('fixture.py:42');
+  ui.search('evil');
   assert.equal(ui.get('selected-name').textContent, 'failed');
 });
 
@@ -161,8 +161,8 @@ test('tabs have roving focus, wrap with arrows, and retain selection across case
   ui.buttons()[1].click();
   assert.equal(ui.get('tab-errors').getAttribute('aria-selected'), 'true');
   assert.equal(ui.get('panel-errors').hidden, false);
-  assert.match(ui.get('panel-errors').textContent, /scorer · ValueError<script>evil\(\)<\/script>Scorer: exactTraceback/);
-  assert.match(ui.get('panel-errors').querySelector('details pre').textContent, /fixture.py:42/);
+  assert.match(ui.get('panel-errors').textContent, /scorer · ValueError<script>evil\(\)<\/script>Scorer: exact/);
+  assert.equal(ui.get('panel-errors').querySelector('details'), null);
   assert.equal(ui.get('panel-errors').querySelectorAll('script').length, 0);
   assert.equal(ui.get('tab-details').tabIndex, -1);
 });
@@ -171,9 +171,9 @@ test('run notices include setup, failed and cancelled reporting without duplicat
   const ui = mount(t);
   const notices = ui.get('run-notices').textContent;
   assert.match(notices, /Setup warning/);
-  assert.match(notices, /Reporting failed · braintrust/);
+  assert.match(notices, /Sink failed · braintrust/);
   assert.match(notices, /Upload rejected/);
-  assert.match(notices, /Reporting cancelled · second/);
+  assert.match(notices, /Sink cancelled · second/);
   assert.doesNotMatch(notices, /Case failure/);
   assert.match(ui.get('panel-errors').textContent, /No execution errors/);
 });
@@ -225,7 +225,7 @@ test('empty failed runs remain inspectable, with no stale selection or enabled c
   const ui = mount(t, payload);
   assert.equal(ui.buttons().length, 0);
   assert.equal(ui.get('copy-id').disabled, true);
-  assert.match(ui.get('stats').textContent, /Quality gatesNot set/);
+  assert.match(ui.get('stats').textContent, /RequirementsNot set/);
   assert.match(ui.get('raw-manifest').textContent, /Setup warning/);
   ui.get('tab-errors').click();
   assert.equal(ui.get('panel-errors').hidden, false);

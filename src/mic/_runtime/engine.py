@@ -142,11 +142,6 @@ async def arun(
         raise ConfigurationError(f"Output directory must be empty: {destination}")
 
     run_id = uuid.uuid4().hex
-    info = RunInfo(
-        run_id,
-        datetime.now(UTC).isoformat(),
-        {task.spec.name: task.config for task in execution.tasks},
-    )
     readers = [
         DatasetReader(
             group.dataset,
@@ -159,6 +154,19 @@ async def arun(
         )
         for index, group in enumerate(execution.groups)
     ]
+    info = RunInfo(
+        run_id,
+        datetime.now(UTC).isoformat(),
+        {
+            task.spec.name: {
+                **task.config,
+                "source_id": reader.source_id,
+                "limits": to_json(reader.limits),
+            }
+            for reader, group in zip(readers, execution.groups, strict=True)
+            for task in group.tasks
+        },
+    )
     aggregate = Aggregator(metrics)
     delivery = Delivery()
     pool = CallbackPool(capacity)

@@ -7,9 +7,9 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 
 from ..models import JsonObject
-from ..results import EvaluationOutcome, RunInfo, SinkReceipt, failure
+from ..results import EvaluationOutcome, Failure, RunInfo, SinkReceipt, failure, to_json
 from ..sinks.base import ResultSink, RunEvent, SinkSession
-from .validation import dumps, json_object
+from .validation import dumps, json_object, nonempty
 
 
 @dataclass
@@ -78,14 +78,23 @@ class Delivery:
                 if state.receipt is None:
                     receipt = await state.session.finish(_outcome_copy(outcome))
                     details: JsonObject = json_object(receipt.details)
+                    error = receipt.error
+                    if error is not None:
+                        fields = json_object(to_json(error))
+                        error = Failure(
+                            nonempty("error phase", fields["phase"]),
+                            nonempty("error type", fields["type"]),
+                            nonempty("error message", fields["message"]),
+                        )
+                    receipt = replace(
+                        receipt, name=state.name, events=state.events, details=details, error=error
+                    )
                     if (
                         receipt.status not in ("completed", "failed", "cancelled")
-                        or len(dumps(details)) > 65_536
+                        or len(dumps(json_object(to_json(receipt))).encode("utf-8")) > 65_536
                     ):
                         raise ValueError("Invalid sink receipt")
-                    state.receipt = replace(
-                        receipt, name=state.name, events=state.events, details=details
-                    )
+                    state.receipt = receipt
             except asyncio.CancelledError as exc:
                 state.receipt = SinkReceipt(
                     state.name, "cancelled", state.events, error=failure("sink_finish", exc)

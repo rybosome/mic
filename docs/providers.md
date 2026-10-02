@@ -129,7 +129,8 @@ row selection and is not a BigQuery scan-cost guarantee. Supply a deterministic,
 unique ordering key; the adapter does not attempt to prove SQL ordering.
 
 Rows remain raw column mappings, including SDK-native datetime/Decimal/bytes
-values, for your mapper. Provenance includes SQL, named parameter values, billing
+values, for your mapper. A returned row with no column mapping is a recoverable
+record rejection; SDK/transport exceptions remain fatal. Provenance includes SQL, named parameter values, billing
 project/location, a stable query identity hash, dry-run estimate, job ID, and
 available actual processing/billing/cache metadata. Query values are evidence;
 do not put credentials in SQL parameters.
@@ -198,6 +199,10 @@ row cap is reached, distinguishing a complete dataset from silent truncation.
 Cursor tracking uses constant space; longer cursor cycles are ultimately bounded
 by the row/byte/deadline caps rather than retaining every historical cursor.
 
+Malformed JSONL records, missing inputs, and missing physical IDs yield a
+recoverable record error at the known line boundary. Run policy decides abort or
+skip; resource limits and pagination/transport failures always abort the source.
+
 Records preserve input, expected presence/null, metadata, and physical record ID.
 Provenance retains dataset ID, pinned version, physical record ID, and returned
 transaction/pagination fields. Attachment descriptors are preserved as data;
@@ -253,7 +258,7 @@ uv run --extra braintrust pytest tests/integration/test_live_providers.py \
 Absent opt-in means skipped. Opted-in tests with missing required fixture config
 fail. JUnit properties capture provider provenance. The Braintrust test compares
 two pinned reads. A fixture-owner-driven change between runs and an explicit
-reporter export remain separate acceptance checks; these read-only tests never
+sink export remain separate acceptance checks; these read-only tests never
 modify source data.
 
 ### SDK deadline behavior
