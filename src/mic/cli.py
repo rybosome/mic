@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import mic
-from mic._runtime.discovery import list_definitions, resolve_definition
+from mic._runtime.discovery import list_definitions, resolve_definition, resolve_evaluations
 from mic.errors import ConfigurationError, DatasetError, MicError
 from mic.models import JsonObject
 from mic.reporters.console import format_summary
@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("selector")
     _execution(preflight)
     run = commands.add_parser("run", help="Run an evaluation; --output opts into local evidence")
-    run.add_argument("selector")
+    run.add_argument("selector", help="Exact module:symbol or module:* for all evaluations")
     _execution(run)
     run.add_argument("--braintrust-project", help="Opt in to exporting this run to Braintrust")
     run.add_argument("--braintrust-experiment")
@@ -122,16 +122,16 @@ def _execute(args: argparse.Namespace) -> int:
         if args.open:
             webbrowser.open(destination.as_uri())
         return 0
-    definition = resolve_definition(args.selector)
+    definition = None if args.command == "run" else resolve_definition(args.selector)
     if args.command == "inspect":
         dataset = definition.dataset if isinstance(definition, mic.Evaluation) else definition
         if not isinstance(dataset, mic.Dataset):
             raise ConfigurationError(f"{args.command} requires a dataset or evaluation definition")
         _print_json(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
         return 0
-    if not isinstance(definition, mic.Evaluation):
-        raise ConfigurationError(f"{args.command} requires an evaluation definition")
     if args.command == "preflight":
+        if not isinstance(definition, mic.Evaluation):
+            raise ConfigurationError("preflight requires an evaluation definition")
         result: JsonObject = mic.preflight(
             definition,
             trials=args.trials,
@@ -142,7 +142,7 @@ def _execute(args: argparse.Namespace) -> int:
         _print_json(result)
         return 0
     run_result = mic.run(
-        definition,
+        resolve_evaluations(args.selector),
         output=args.output,
         trials=args.trials,
         concurrency=args.concurrency,

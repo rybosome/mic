@@ -15,9 +15,11 @@ mic run ticket_eval:classify
 ```
 
 `module:symbol` selects an exact public Python symbol, not its decorator's `name`.
-Package paths such as `evals.tickets:classify` work too. There is no glob selection
-or automatic suite discovery. `list` accepts one or more explicit module names
-and lists datasets, evaluations, and scorers with their selectors.
+Package paths such as `evals.tickets:classify` work too. For a suite, use
+`mic run 'ticket_eval:*'`: all public evaluations in that module, in sorted symbol
+order, with aliases deduplicated. This is the only wildcard form; it does not scan
+packages or accept partial-symbol globs. Duplicate evaluation names are rejected
+before source reads. `list` accepts explicit module names and lists definitions.
 
 Only import trusted modules: importing Python executes their top-level code.
 Mic's discovery does not invoke dataset factories or initialize provider clients.
@@ -29,7 +31,7 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 | `list` | One or more modules | List definitions; no dataset reads or task calls. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
-| `run` | Evaluation selector | Stream trials/scorers; `--output` opts into evidence. Optional `--json` prints the final manifest. |
+| `run` | Evaluation selector or `module:*` | Stream trials/scorers; `--output` opts into evidence. Optional `--json` prints the final manifest. |
 | `report` | Run directory or `run.json` | Render existing evidence as standalone HTML; no evaluation rerun. |
 
 Inspection, preflight, and runs read cloud datasets when selected. Each invocation
@@ -44,7 +46,11 @@ mic run ticket_eval:classify --trials 5 --concurrency 2 --timeout 30
 
 `--trials` and `--concurrency` override the evaluation's decorator settings
 (defaults: 1 trial and concurrency 10). Preflight accepts both overrides, but
-executes no trials. Trials apply to every dataset case; `run` has no case-filter
+executes no trials. For suites, concurrency is global (default: largest selected
+decorator value), not multiplied per evaluation. Trials override all selected tasks;
+otherwise each uses its own default. `--max-executions` is global, source limits
+apply per distinct Dataset object, and identical Dataset objects share one read.
+Trials apply to every dataset case; `run` has no case-filter
 or prefix-selection flag.
 
 | Option | Commands | Default / meaning |

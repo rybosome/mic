@@ -212,6 +212,50 @@ only counts and provenance. They raise `DatasetError` on invalid data and do not
 cache anything for a later run. `inspect_dataset` / `ainspect_dataset` intentionally
 collect a bounded prefix (default 20 records; explicit positive `limit` supported).
 
+## Multiple evaluations
+
+Pass a sequence to the same runner:
+
+```python
+result = mic.run(
+    [baseline, candidate],
+    concurrency=4,
+    require=[
+        'tasks["candidate"].scores["accuracy"].mean >= 0.9',
+        'trials.task_failed == 0',
+    ],
+)
+```
+
+All evaluation names must be unique. Repeated references to the same evaluation
+are deduplicated. A heterogeneous selection can be annotated as
+`Sequence[mic.EvaluationDefinition]`; its members remain ordinary fully typed
+`Evaluation[I, O, E, M]` descriptors. Dataset/scorer/callback checks still happen
+at authoring time, before this dispatch boundary.
+
+Evaluations referencing the **same Dataset object** share one factory call and
+validated stream. Equality of names, handles, or SQL does not imply sharing.
+Every subscriber receives isolated trials; one task's mutation cannot affect
+another. Expected answers are required for a shared source if its schema or any
+subscriber's scorer requires them.
+
+Distinct source groups are opened sequentially in first-selected order; admitted
+work can overlap the next source. A source failure stops its group, not independent
+groups. Global execution caps or sink failure stop admission across the selection.
+An empty/all-rejected selected task fails rather than hiding behind another task's
+success.
+
+`concurrency=` is one **global** worker/queue bound, not multiplied by task count.
+When omitted, the largest selected decorator concurrency supplies that global
+bound; decorators do not impose additional per-task quotas. `trials=` overrides
+all tasks, otherwise each keeps its own default. `max_executions` is global;
+`ReadLimits` apply separately to each source group. Results/requirements use
+evaluation names and global trial aggregates.
+
+`preflight` remains a single-evaluation data-validation operation, not a suite
+cache. CLI `run module:*` selects all public evaluations in sorted symbol order,
+deduplicating aliases; exact selectors are unchanged.
+
 ## Bounded summaries and requirements
 
 `Statistics(count, mean, min, max)` contains numeric observations only. No

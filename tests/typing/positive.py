@@ -72,3 +72,14 @@ assert_type(concise, mic.Scorer[str, str, str, mic.JsonObject])
 assert_type(input_only, mic.Evaluation[str, str, str, mic.JsonObject])
 assert_type(async_input_only, mic.Evaluation[str, str, str, mic.JsonObject])
 assert_type(concise_context, mic.Evaluation[str, str, str, mic.JsonObject])
+
+
+# Heterogeneous evaluations retain their own authoring types at the run boundary.
+@mic.eval(dataset=text_data, scorers=[])
+def numeric_output(value: str) -> int:
+    return len(value)
+
+
+def run_suite() -> mic.RunResult:
+    evaluations: list[mic.EvaluationDefinition] = [sync_eval, numeric_output]
+    return mic.run(evaluations)

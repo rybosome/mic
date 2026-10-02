@@ -68,3 +68,6 @@ def wrong_metadata_access(ctx: mic.TaskContext) -> str:
 
 def no_task_reference(ctx: mic.TaskContext) -> object:
     return ctx.expected  # expect-error
+
+
+mic.run([text_data])  # expect-error

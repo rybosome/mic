@@ -55,3 +55,27 @@ def resolve_definition(selector: str) -> Definition:
         if definition.selector == selector:
             return definition.definition
     raise ConfigurationError(f"No mic definition found at {selector!r}")
+
+
+def resolve_evaluations(selector: str) -> list[mic.EvaluationDefinition]:
+    """Exact evaluation or module:*; deterministic symbol order, aliases once."""
+    if selector.count(":") == 1 and selector.endswith(":*"):
+        module_name = selector[:-2]
+        if not module_name:
+            raise ConfigurationError("Wildcard selection requires a module name")
+        selected: list[mic.EvaluationDefinition] = []
+        seen: set[int] = set()
+        for definition in list_definitions(module_name):
+            if (
+                isinstance(definition.definition, mic.Evaluation)
+                and id(definition.definition) not in seen
+            ):
+                seen.add(id(definition.definition))
+                selected.append(definition.definition)
+        if not selected:
+            raise ConfigurationError(f"No evaluations found in {module_name!r}")
+        return selected
+    definition = resolve_definition(selector)
+    if not isinstance(definition, mic.Evaluation):
+        raise ConfigurationError("run requires an evaluation definition")
+    return [definition]
