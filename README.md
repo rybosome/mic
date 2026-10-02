@@ -56,7 +56,7 @@ class Classification(BaseModel):
     label: Literal["bug", "feature", "question"]
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+@mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> list[mic.RawCase]:
     return [
         mic.RawCase(
@@ -85,7 +85,7 @@ Give a correct label `1`, an incorrect label `0`.
 
 <!-- snippet: quickstart-scoring -->
 ```python
-@mic.scorer(name="accuracy")
+@mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
 ```
@@ -98,7 +98,7 @@ uses the same `Classification` model as Mic.
 
 <!-- snippet: quickstart-task -->
 ```python
-@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+@mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
     from openai import OpenAI
 
@@ -175,7 +175,7 @@ from pathlib import Path
 from mic.providers.files import FileHandle
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+@mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> FileHandle:
     return FileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
@@ -198,7 +198,7 @@ one, using your billing project, location, and table (columns: `id`, `subject`,
 from mic.providers.bigquery import BigQueryHandle
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+@mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> BigQueryHandle:
     return BigQueryHandle(
         billing_project="your-project",
@@ -226,7 +226,7 @@ Set `BRAINTRUST_API_KEY`. Use an existing dataset with the same `input` and
 from mic.providers.braintrust import BraintrustHandle
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+@mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> BraintrustHandle:
     return BraintrustHandle(
         dataset_id="your-dataset-id",
@@ -247,7 +247,7 @@ Replace the quickstart's scorer block with:
 
 <!-- snippet: extended-scoring -->
 ```python
-@mic.scorer(name="accuracy")
+@mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> mic.Score:
     expected = ctx.require_expected().label
     return mic.Score(
@@ -256,7 +256,7 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> mic.Score:
     )
 
 
-@mic.scorer(name="bug_recall")
+@mic.scorer()
 def bug_recall(ctx: mic.ScoreContext[Ticket, Classification]) -> float | None:
     if ctx.require_expected().label != "bug":
         return None
@@ -267,7 +267,7 @@ Then change the task's decorator to:
 
 <!-- snippet: multiple-scorers -->
 ```python
-@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy, bug_recall])
+@mic.eval(dataset=tickets, scorers=[accuracy, bug_recall])
 ```
 
 See [scoring contracts](docs/api.md).
@@ -284,7 +284,7 @@ The dataset, scorer, and CLI commands stay the same.
 
 <!-- snippet: async-task -->
 ```python
-@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+@mic.eval(dataset=tickets, scorers=[accuracy])
 async def classify(ticket: Ticket) -> Classification:
     from openai import AsyncOpenAI
 

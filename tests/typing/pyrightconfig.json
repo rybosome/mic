@@ -3,6 +3,7 @@
   "typeCheckingMode": "strict",
   "include": [
     "positive.py",
+    "concise.py",
     "negative.py",
     "../../examples/structured.py",
     "../../examples/pydantic_models.py",
