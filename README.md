@@ -238,46 +238,7 @@ def tickets() -> BraintrustHandle:
 ```
 
 Factories describe sources; reading a cloud dataset contacts that service.
-See [provider setup, limits, and custom sources](docs/providers.md).
-
-### Custom
-
-A dataset factory can return a fresh iterable or async iterable of `mic.RawCase`
-objects—no provider interface needed. For a reusable integration, return a passive
-handle instead. Handles have no required base class or methods; their registered
-loader implements these interfaces from `mic.providers.base`:
-
-<!-- snippet: custom-provider-contracts -->
-```python
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
-from typing import Protocol
-
-from mic import JsonObject, ReadLimits
-
-
-class DatasetRead(Protocol):
-    @property
-    def provenance(self) -> JsonObject: ...
-
-    def rows(self) -> AsyncIterator[object]: ...
-
-
-class DatasetLoader[H](Protocol):
-    def open(
-        self, handle: H, *, limits: ReadLimits
-    ) -> AbstractAsyncContextManager[DatasetRead]: ...
-```
-
-`rows()` yields `RawCase` objects or the same row mappings shown in the JSONL
-example. Open resources inside the async context manager and close them on exit;
-honor read limits and keep credentials out of provenance.
-
-Create a `Resolver.with_builtin_loaders()` from `mic.providers.base`, register
-your handle and loader with `resolver.register(TicketHandle, TicketLoader())`,
-then pass it to `mic.run(classify, resolver=resolver)` (or `mic.arun`). The
-`tickets` factory returns your `TicketHandle`; the scorer and task stay unchanged.
-Custom resolver registration is programmatic, not a CLI configuration option.
+See [provider setup and limits](docs/providers.md).
 
 ## Scoring: multiple metrics and supporting evidence
 
@@ -317,20 +278,75 @@ bugs found; its mean excludes the non-bug cases that return `None`.
 Reference-free metrics use `@mic.scorer(name=..., requires_expected=False)`.
 See [scoring contracts](docs/api.md).
 
-## Run regularly
+## Use the CLI
+
+Run a specific evaluation, control repeated execution, and enforce quality
+thresholds without writing a runner. `ticket_eval:classify` selects the `classify`
+definition in `ticket_eval.py`.
+
+### Discover and validate
 
 ```console
-# Inspect cases; cloud sources perform reads.
+# List datasets, scorers, and evaluations without loading data.
+mic list ticket_eval
+
+# Inspect three validated cases without calling the task.
 mic inspect ticket_eval:tickets --limit 3
 
-# Validate the dataset and configuration without calling the task.
+# Validate the full dataset and execution configuration without calling the task.
 mic preflight ticket_eval:classify
+```
 
-# Five trials per case, at most two tasks running concurrently.
-mic run ticket_eval:classify --trials 5 --concurrency 2
+Inspection and preflight read datasets, including remote sources.
 
-# Exit nonzero on execution failure or mean accuracy below this example threshold.
-mic run ticket_eval:classify --require 'accuracy>=0.9'
+### Control the run
+
+```console
+mic run ticket_eval:classify \
+  --trials 5 \
+  --concurrency 2 \
+  --timeout 30 \
+  --output .mic/tickets-v2
+```
+
+Five trials per case, at most two concurrent tasks, and a cooperative 30-second
+per-trial timeout. See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
+for safety caps and timeout behavior.
+
+### Turn scores into pass/fail requirements
+
+With both scorers from the preceding section attached:
+
+<!-- snippet: cli-gates -->
+```console
+mic run ticket_eval:classify \
+  --trials 5 \
+  --require 'accuracy>=0.9' \
+  --require 'bug_recall>=0.95'
+```
+
+Each `--require` compares a scorer's mean across numeric results, excluding `None`.
+All requirements must pass; supported comparisons are `>=`, `>`, `<=`, `<`, and
+`==`. A failed requirement exits nonzero for CI, while preserving saved evidence.
+These are aggregate thresholds, not per-case assertions or comparisons with a
+previous run. See [quality gates](docs/cli.md#quality-gates) for full semantics.
+
+### Inspect or automate the results
+
+```console
+# Render saved evidence without rerunning the task.
+mic report .mic/tickets-v2 --open
+
+# Print the final run manifest as JSON for automation.
+mic run ticket_eval:classify --json
+```
+
+For all six commands, including BigQuery cost estimation, see the
+[CLI reference](docs/cli.md), or explore the built-in help:
+
+```console
+mic --help
+mic run --help
 ```
 
 Change the prompt or model, rerun, and inspect which cases improved or regressed.

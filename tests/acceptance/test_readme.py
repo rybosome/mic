@@ -19,7 +19,7 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 def snippet(name: str) -> str:
     match = re.search(
-        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl)\n(.*?)```",
+        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|console)\n(.*?)```",
         README,
         re.DOTALL,
     )
@@ -65,21 +65,28 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch) -> None:
     module, constructor, client = quickstart
+    task = snippet("multiple-scorers") + snippet("quickstart-task").split("\n", 1)[1]
+    exec(snippet("extended-scoring") + "\n\n" + task, module.__dict__)
     opened = MagicMock(return_value=True)
     monkeypatch.setattr("webbrowser.open", opened)
     commands = [
         line
         for block in re.findall(r"```console\n(.*?)```", README, re.DOTALL)
-        for line in block.splitlines()
+        for line in block.replace("\\\n", " ").splitlines()
         if line.startswith("mic ")
     ]
     for command in commands:
-        assert main(shlex.split(command)[1:]) == 0, command
+        if "--help" in command:
+            with pytest.raises(SystemExit) as result:
+                main(shlex.split(command)[1:])
+            assert result.value.code == 0
+        else:
+            assert main(shlex.split(command)[1:]) == 0, command
     assert (
-        client.responses.parse.call_count == 21
-    )  # 3 + 15 + 3; inspection/preflight/report make no model calls.
-    assert constructor.call_count == 21
-    assert constructor.return_value.__exit__.call_count == 21
+        client.responses.parse.call_count == 36
+    )  # 3 + 15 + 15 + 3; discovery/inspection/preflight/report/help make no model calls.
+    assert constructor.call_count == 36
+    assert constructor.return_value.__exit__.call_count == 36
     constructor.assert_called_with(timeout=30, max_retries=0)
     request = client.responses.parse.call_args.kwargs
     assert request["text_format"] is module.Classification
@@ -87,16 +94,15 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     assert request["store"] is False
     assert request["model"] == "gpt-4.1-mini"
     assert "bug (broken behavior)" in request["instructions"]
-    opened.assert_called_once()
+    assert opened.call_count == 2
     first = json.loads(Path(".mic/tickets/run.json").read_text())
-    repeated = next(
-        data
-        for path in Path(".mic").rglob("run.json")
-        if (data := json.loads(path.read_text()))["counts"]["completed"] == 15
-    )
+    repeated = json.loads(Path(".mic/tickets-v2/run.json").read_text())
     assert first["scores"]["accuracy"]["mean"] == 1
     assert first["counts"]["completed"] == 3
     assert repeated["counts"]["completed"] == 15
+    assert repeated["options"]["trials"] == 5
+    assert repeated["options"]["concurrency"] == 2
+    assert repeated["options"]["timeout"] == 30
     assert Path(".mic/tickets/report.html").is_file()
 
 
@@ -228,22 +234,10 @@ def test_cloud_factory_examples_are_passive(quickstart, name: str) -> None:
     constructor.assert_not_called()
 
 
-def test_custom_provider_contracts_match_public_interfaces() -> None:
-    source = snippet("custom-provider-contracts")
-    namespace = {}
-    exec(compile(source, "readme_custom_provider", "exec"), namespace)
-    documented = ast.parse(source)
-    implementation = ast.parse((ROOT / "src/mic/providers/base.py").read_text(encoding="utf-8"))
-    for name in ("DatasetRead", "DatasetLoader"):
-        example = next(n for n in documented.body if isinstance(n, ast.ClassDef) and n.name == name)
-        contract = next(
-            n for n in implementation.body if isinstance(n, ast.ClassDef) and n.name == name
-        )
-        assert ast.dump(example) == ast.dump(contract), f"README contract drifted: {name}"
-
-
-@pytest.mark.parametrize("miss_bug", [False, True])
-def test_multiple_metrics_metadata_and_nonapplicable_scores(quickstart, miss_bug: bool) -> None:
+@pytest.mark.parametrize("miss_bug,relaxed_accuracy", [(False, False), (True, False), (True, True)])
+def test_multiple_metrics_metadata_and_nonapplicable_scores(
+    quickstart, miss_bug: bool, relaxed_accuracy: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
     module, _, client = quickstart
     task = snippet("quickstart-task")
     task = snippet("multiple-scorers") + task.split("\n", 1)[1]
@@ -257,11 +251,22 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(quickstart, miss_bug
         return respond(**kwargs)
 
     client.responses.parse.side_effect = predict
-    assert main(["run", "ticket_eval:classify", "--output", "metrics"]) == 0
+    command = shlex.split(snippet("cli-gates").replace("\\\n", " "))[1:]
+    if relaxed_accuracy:
+        command[command.index("accuracy>=0.9")] = "accuracy>=0.6"
+    assert main([*command, "--output", "metrics", "--json"]) == (1 if miss_bug else 0)
     manifest = json.loads(Path("metrics/run.json").read_text())
+    assert json.loads(capsys.readouterr().out) == manifest
+    assert [gate["passed"] for gate in manifest["gates"]] == [
+        not miss_bug or relaxed_accuracy,
+        not miss_bug,
+    ]
+    assert manifest["counts"]["completed"] == 15
+    assert manifest["counts"]["failed"] == 0
+    assert Path("metrics/report.html").is_file()
     assert manifest["scores"]["accuracy"]["mean"] == pytest.approx(2 / 3 if miss_bug else 1)
     recall = manifest["scores"]["bug_recall"]
-    assert recall["count"] == 1 and recall["null_count"] == 2
+    assert recall["count"] == 5 and recall["null_count"] == 10
     assert recall["mean"] == (0 if miss_bug else 1)
     cases = [json.loads(line) for line in Path("metrics/cases.jsonl").read_text().splitlines()]
     bug = next(case for case in cases if case["case_id"] == "upload")
