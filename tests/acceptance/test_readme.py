@@ -228,6 +228,20 @@ def test_cloud_factory_examples_are_passive(quickstart, name: str) -> None:
     constructor.assert_not_called()
 
 
+def test_custom_provider_contracts_match_public_interfaces() -> None:
+    source = snippet("custom-provider-contracts")
+    namespace = {}
+    exec(compile(source, "readme_custom_provider", "exec"), namespace)
+    documented = ast.parse(source)
+    implementation = ast.parse((ROOT / "src/mic/providers/base.py").read_text(encoding="utf-8"))
+    for name in ("DatasetRead", "DatasetLoader"):
+        example = next(n for n in documented.body if isinstance(n, ast.ClassDef) and n.name == name)
+        contract = next(
+            n for n in implementation.body if isinstance(n, ast.ClassDef) and n.name == name
+        )
+        assert ast.dump(example) == ast.dump(contract), f"README contract drifted: {name}"
+
+
 @pytest.mark.parametrize("miss_bug", [False, True])
 def test_multiple_metrics_metadata_and_nonapplicable_scores(quickstart, miss_bug: bool) -> None:
     module, _, client = quickstart
@@ -252,6 +266,5 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(quickstart, miss_bug
     cases = [json.loads(line) for line in Path("metrics/cases.jsonl").read_text().splitlines()]
     bug = next(case for case in cases if case["case_id"] == "upload")
     assert bug["scores"][0]["metadata"] == {
-        "expected": "bug",
-        "predicted": "question" if miss_bug else "bug",
+        "body_length": len("The app closes whenever I upload a PDF."),
     }

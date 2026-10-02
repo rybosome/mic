@@ -240,6 +240,45 @@ def tickets() -> BraintrustHandle:
 Factories describe sources; reading a cloud dataset contacts that service.
 See [provider setup, limits, and custom sources](docs/providers.md).
 
+### Custom
+
+A dataset factory can return a fresh iterable or async iterable of `mic.RawCase`
+objects—no provider interface needed. For a reusable integration, return a passive
+handle instead. Handles have no required base class or methods; their registered
+loader implements these interfaces from `mic.providers.base`:
+
+<!-- snippet: custom-provider-contracts -->
+```python
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
+from typing import Protocol
+
+from mic import JsonObject, ReadLimits
+
+
+class DatasetRead(Protocol):
+    @property
+    def provenance(self) -> JsonObject: ...
+
+    def rows(self) -> AsyncIterator[object]: ...
+
+
+class DatasetLoader[H](Protocol):
+    def open(
+        self, handle: H, *, limits: ReadLimits
+    ) -> AbstractAsyncContextManager[DatasetRead]: ...
+```
+
+`rows()` yields `RawCase` objects or the same row mappings shown in the JSONL
+example. Open resources inside the async context manager and close them on exit;
+honor read limits and keep credentials out of provenance.
+
+Create a `Resolver.with_builtin_loaders()` from `mic.providers.base`, register
+your handle and loader with `resolver.register(TicketHandle, TicketLoader())`,
+then pass it to `mic.run(classify, resolver=resolver)` (or `mic.arun`). The
+`tickets` factory returns your `TicketHandle`; the scorer and task stay unchanged.
+Custom resolver registration is programmatic, not a CLI configuration option.
+
 ## Scoring: multiple metrics and supporting evidence
 
 Mic does not bundle built-in scorers. Each scorer produces **one named metric**;
@@ -255,7 +294,7 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> mic.Score:
     expected = ctx.require_expected().label
     return mic.Score(
         value=float(ctx.output.label == expected),
-        metadata={"expected": expected, "predicted": ctx.output.label},
+        metadata={"body_length": len(ctx.input.body)},
     )
 
 
