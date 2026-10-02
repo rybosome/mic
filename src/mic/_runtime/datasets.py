@@ -164,7 +164,11 @@ class DatasetReader[I, E, M]:
             if self._remaining <= 0:
                 raise TimeoutError
             async with asyncio.timeout(self._remaining):
-                return await function()
+                result = await function()
+                # A completed callback can race the event loop timeout callback.
+                if time.perf_counter() - started >= self._remaining:
+                    raise TimeoutError
+                return result
         except TimeoutError:
             raise DatasetError("Source read budget exceeded (TimeoutError)") from None
         finally:

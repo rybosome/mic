@@ -12,15 +12,23 @@ from tests.runtime.helpers import cases
 from .helpers import evaluation, manifest, row
 
 
-async def test_actual_async_concurrency_bound_and_stable_order(tmp_path):
+async def test_actual_async_concurrency_bound_and_complete_trial_coordinates(tmp_path):
     active = peak = 0
     completion = []
+    saturated = asyncio.Event()
+    second_row = asyncio.Event()
 
     async def task(ctx, value):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
-        await asyncio.sleep((6 - value) * 0.002)
+        if active == 3:
+            saturated.set()
+        await asyncio.wait_for(saturated.wait(), 5)
+        if value == 0:
+            await asyncio.wait_for(second_row.wait(), 5)
+        else:
+            second_row.set()
         completion.append(value)
         active -= 1
         return value
@@ -37,6 +45,7 @@ async def test_actual_async_concurrency_bound_and_stable_order(tmp_path):
 async def test_sync_task_does_not_block_event_loop_and_respects_bound(tmp_path):
     active = peak = beats = 0
     lock = threading.Lock()
+    barrier = threading.Barrier(2)
     done = asyncio.Event()
 
     def task(ctx, value):
@@ -44,6 +53,7 @@ async def test_sync_task_does_not_block_event_loop_and_respects_bound(tmp_path):
         with lock:
             active += 1
             peak = max(peak, active)
+        barrier.wait(timeout=5)
         time.sleep(0.02)
         with lock:
             active -= 1

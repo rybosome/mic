@@ -353,19 +353,25 @@ def test_sink_failure_is_visible_and_healthy_sinks_finalize(phase, tmp_path) -> 
     assert json.loads((tmp_path / "run.json").read_text())["status"] == "failed"
 
 
-def test_mapping_time_consumes_source_budget_and_joins_mapper():
-    import time
+def test_mapping_time_consumes_source_budget_and_joins_mapper(monkeypatch):
+    from types import SimpleNamespace
 
+    from mic._runtime import datasets
+
+    clock = [0.0]
+    monkeypatch.setattr(datasets, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
     calls = []
 
     def slow_map(raw):
-        time.sleep(0.02)
+        # Advance only the source budget clock, not the host event loop. This
+        # also covers callbacks completing before the timeout callback runs.
+        clock[0] += 61
         calls.append("mapped")
         return mic.RawCase(input=1, expected=1)
 
     spec = evaluation([row()], task=lambda value: calls.append("task") or value)
     spec = replace(spec, dataset=replace(spec.dataset, map_row=slow_map))
-    result = mic.run(spec, limits=mic.ReadLimits(timeout_seconds=0.005))
+    result = mic.run(spec)
     assert result.exit_code == 2
     assert calls == ["mapped"]
     assert result.summary.trials.planned == 0
