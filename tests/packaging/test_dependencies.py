@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import mic
 import mic.providers
+from mic.reporters.html import write_report
 
 @dataclass
 class Item:
@@ -56,8 +57,8 @@ def predict(ctx, value):
 
 result = mic.run(predict, output=Path("result"))
 assert result.exit_code == 0
-assert result.manifest["scores"]["exact"]["mean"] == 1.0
-assert (result.output_dir / "report.html").is_file()
+assert result.summary.tasks["isolated"].scores["exact"].mean == 1.0
+assert write_report(result.output_dir).is_file()
 assert not ({"pydantic", "google", "braintrust", "httpx", "requests"} & set(sys.modules))
 print("zero-dependency native core passed")
 """

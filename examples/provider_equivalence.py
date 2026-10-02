@@ -60,10 +60,10 @@ def braintrust_data() -> BraintrustHandle:
 
 
 @mic.eval(name="triage.bigquery.fixed", dataset=bigquery_data, output=str, scorers=[exact])
-def bigquery_fixed(context: TaskContext[str, JsonObject], text: str) -> str:
+def bigquery_fixed(context: TaskContext[JsonObject], text: str) -> str:
     return classify_fixed(text)
 
 
 @mic.eval(name="triage.braintrust.fixed", dataset=braintrust_data, output=str, scorers=[exact])
-def braintrust_fixed(context: TaskContext[str, JsonObject], text: str) -> str:
+def braintrust_fixed(context: TaskContext[JsonObject], text: str) -> str:
     return classify_fixed(text)

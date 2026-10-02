@@ -8,16 +8,16 @@ from mic import JsonObject, Missing, Score, ScoreContext, TaskContext
 
 
 @mic.eval(name="failures.task", dataset=triage_data, output=str, scorers=[exact])
-def task_error(context: TaskContext[str, JsonObject], text: str) -> str:
+def task_error(context: TaskContext[JsonObject], text: str) -> str:
     if "crashes" in text:
         raise RuntimeError("Demonstration task error: unavailable upstream service")
-    return context.require_expected()
+    return text
 
 
 @mic.eval(name="failures.output_schema", dataset=triage_data, output=str, scorers=[exact])
-def output_schema(context: TaskContext[str, JsonObject], text: str) -> str:
+def output_schema(context: TaskContext[JsonObject], text: str) -> str:
     # This deliberate annotation violation demonstrates runtime validation of external values.
-    return cast(str, 17) if "crashes" in text else context.require_expected()
+    return cast(str, 17) if "crashes" in text else text
 
 
 @mic.scorer(name="unstable")
@@ -26,8 +26,8 @@ def unstable(context: ScoreContext[str, str, str, JsonObject]) -> float:
 
 
 @mic.eval(name="failures.scorer", dataset=triage_data, output=str, scorers=[exact, unstable])
-def scorer_error(context: TaskContext[str, JsonObject], text: str) -> str:
-    return context.require_expected()
+def scorer_error(context: TaskContext[JsonObject], text: str) -> str:
+    return text
 
 
 @mic.dataset(
@@ -50,5 +50,5 @@ def nullable_exact(context: ScoreContext[str, str, str | None, JsonObject]) -> S
 
 
 @mic.eval(name="failures.null_score", dataset=nullable_data, output=str, scorers=[nullable_exact])
-def null_score(context: TaskContext[str | None, JsonObject], text: str) -> str:
+def null_score(context: TaskContext[JsonObject], text: str) -> str:
     return "value"

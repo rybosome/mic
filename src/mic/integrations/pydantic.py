@@ -95,7 +95,7 @@ class _PydanticSchema[T]:
         )
 
     def json_schema(self) -> dict[str, object]:
-        # Python field names are the canonical keys in persisted mic snapshots.
+        # Python field names are the canonical keys in normalized mic records.
         return cast(dict[str, object], self.adapter.json_schema(by_alias=False))
 
 

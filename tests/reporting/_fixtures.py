@@ -2,18 +2,24 @@ from mic.models import JsonObject
 
 
 def sample() -> tuple[JsonObject, list[JsonObject]]:
-    manifest: JsonObject = {
-        "schema_version": "mic-run-v2",
-        "name": "<script>bad()</script>",
-        "run_id": "run-1",
-        "status": "completed",
-        "dataset": {"name": "data", "rows": 2, "digest": "sha256:abc"},
-        "counts": {"planned": 2, "completed": 2, "failed": 0, "cancelled": 0},
-        "options": {"trials": 1, "concurrency": 2},
-        "scores": {"exact": {"mean": 1.0, "count": 1, "null_count": 1, "unavailable_count": 0}},
-        "gates": [],
-        "provenance": {"definition": "example:eval"},
-    }
+    from mic._runtime.aggregation import Aggregator, TrialObservation
+    from mic.results import RunInfo, RunResult, SourceSummary
+
+    agg = Aggregator({"<script>bad()</script>": ["exact"]})
+    for score in (None, 1.0):
+        agg.admit("<script>bad()</script>")
+        agg.observe(
+            "<script>bad()</script>", TrialObservation("completed", {"exact": score}, 1.0, 1.0, 2.0)
+        )
+    manifest = RunResult(
+        "run-1",
+        "completed",
+        0,
+        agg.snapshot(),
+        {"source": SourceSummary("data", 2, 2, 0, True, None)},
+        (),
+        info=RunInfo("run-1", "2026-10-02T00:00:00+00:00", {}),
+    ).to_json()
     cases: list[JsonObject] = [
         {
             "case_id": "missing",
@@ -42,4 +48,7 @@ def sample() -> tuple[JsonObject, list[JsonObject]]:
             "provenance": {"line": 2},
         },
     ]
+    for case in cases:
+        case["task"] = "<script>bad()</script>"
+        case["source_id"] = "source"
     return manifest, cases

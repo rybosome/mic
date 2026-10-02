@@ -31,3 +31,25 @@ def row(value=1, **extra):
 
 def manifest(path: Path):
     return json.loads((path / "run.json").read_text(encoding="utf-8"))
+
+
+def events(path: Path):
+    return [
+        json.loads(line)
+        for line in (path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+
+def cases(result):
+    rows = [
+        event["result"] for event in events(result.output_dir) if event["type"] == "trial_finished"
+    ]
+    return sorted(rows, key=lambda case: (case["row_index"], case["trial"]))
+
+
+def scores(result):
+    return next(iter(result.summary.tasks.values())).scores
+
+
+def source(result):
+    return next(iter(result.sources.values()))

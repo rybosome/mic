@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/event-v1.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "mic-event-v1"
+        },
+        "type": {
+          "const": "case_accepted"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "row_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "case": {
+          "type": "object",
+          "properties": {
+            "input": {},
+            "expected": {},
+            "metadata": {},
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provenance": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "source_id",
+        "row_index",
+        "case_id",
+        "case"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "mic-event-v1"
+        },
+        "type": {
+          "const": "record_rejected"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "row_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "$ref": "common-v3.schema.json#/$defs/failure"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "source_id",
+        "row_index",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "mic-event-v1"
+        },
+        "type": {
+          "const": "trial_finished"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "row_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trial": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "common-v3.schema.json#/$defs/case"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "source_id",
+        "task",
+        "row_index",
+        "trial",
+        "case_id",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "mic-event-v1"
+        },
+        "type": {
+          "const": "source_finished"
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "$ref": "common-v3.schema.json#/$defs/source"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "source_id",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

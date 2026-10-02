@@ -40,7 +40,7 @@ class TrialObservation:
     scores: Mapping[str, float | None]
     task_ms: float | None
     scoring_ms: float | None
-    total_ms: float
+    total_ms: float | None
 
 
 @dataclass(slots=True)
@@ -62,7 +62,8 @@ class Trials:
             self.task_ms.add(trial.task_ms)
         if trial.scoring_ms is not None:
             self.scoring_ms.add(trial.scoring_ms)
-        self.total_ms.add(trial.total_ms)
+        if trial.total_ms is not None:
+            self.total_ms.add(trial.total_ms)
 
     def snapshot(self) -> TrialSummary:
         return TrialSummary(

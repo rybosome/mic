@@ -1,6 +1,6 @@
 """Typed micro-evaluations. Cloud SDKs and credentials are loaded only on demand."""
 
-from ._runtime.materialization import ainspect_dataset, inspect_dataset
+from ._runtime.datasets import ainspect_dataset, inspect_dataset
 from .decorators import case_schema, dataset, eval, scorer
 from .errors import ConfigurationError, DatasetError, MicError, MissingExpectedError
 from .models import (
@@ -13,13 +13,13 @@ from .models import (
     Missing,
     RawCase,
     ReadLimits,
-    RunResult,
     Score,
     ScoreContext,
     Scorer,
     TaskContext,
     TaskResult,
 )
+from .results import RunResult
 from .runner import apreflight, arun, preflight, run
 from .schema import Schema, SchemaError, schema
 from .sources import DatasetSource, ReadContext, RecordError

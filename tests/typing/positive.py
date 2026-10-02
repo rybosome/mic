@@ -19,13 +19,13 @@ def exact(ctx: mic.ScoreContext[str, str, str, mic.JsonObject]) -> float:
 
 
 @mic.eval(name="sync", dataset=text_data, output=str, scorers=[exact])
-def sync_eval(ctx: mic.TaskContext[str, mic.JsonObject], value: str) -> str:
-    assert_type(ctx.require_expected(), str)
+def sync_eval(ctx: mic.TaskContext[mic.JsonObject], value: str) -> str:
+    assert_type(ctx.case_id, str)
     return value.upper()
 
 
 @mic.eval(name="async", dataset=text_data, output=str, scorers=[exact])
-async def async_eval(ctx: mic.TaskContext[str, mic.JsonObject], value: str) -> mic.TaskResult[str]:
+async def async_eval(ctx: mic.TaskContext[mic.JsonObject], value: str) -> mic.TaskResult[str]:
     return mic.TaskResult(value.upper(), {"case_id": ctx.case_id})
 
 
@@ -55,8 +55,8 @@ async def async_input_only(value: str) -> mic.TaskResult[str]:
 
 
 @mic.eval(name="concise-context", dataset=text_data, output=str, scorers=[concise])
-def concise_context(ctx: mic.TaskContext[str], value: str) -> str:
-    assert_type(ctx.require_expected(), str)
+def concise_context(ctx: mic.TaskContext, value: str) -> str:
+    assert_type(ctx.trial, int)
     assert_type(ctx.metadata, mic.JsonObject | None)
     return value
 

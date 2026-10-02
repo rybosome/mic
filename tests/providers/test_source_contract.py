@@ -166,7 +166,7 @@ async def test_yaml_source_hydrates_dataclasses_without_registration(tmp_path) -
         return YamlDocuments(path)
 
     result = await mic.ainspect_dataset(tickets)
-    assert result["dataset"]["rows"] == 2
+    assert result["dataset"]["records_accepted"] == 2
     assert result["rows"][0]["input"] == {"body": "Cannot sign in"}
     assert result["dataset"]["provenance"]["read_complete"] is True
 

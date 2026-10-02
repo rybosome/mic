@@ -9,7 +9,6 @@ import httpx
 import pytest
 from pydantic import BaseModel, Field
 
-from mic._runtime.materialization import load_dataset
 from mic._runtime.sources import open_source
 from mic.decorators import case_schema, dataset
 from mic.errors import ConfigurationError, DatasetError
@@ -17,6 +16,7 @@ from mic.integrations.pydantic import pydantic_schema
 from mic.models import MISSING, RawCase, ReadLimits
 from mic.providers.braintrust import BraintrustHandle
 from mic.sources import DatasetSource
+from tests.datasets.helpers import collect_dataset
 
 
 def definition(source, *, input=str, expected=str, expected_policy="required", map_row=None):
@@ -48,10 +48,10 @@ async def test_custom_read_iterator_finally_runs_before_loader_context_exit(stop
                 events.append("source closed")
 
     if stop == "prefix":
-        await load_dataset(definition(Handle()), limit=1)
+        await collect_dataset(definition(Handle()), limit=1)
     else:
         with pytest.raises(DatasetError):
-            await load_dataset(definition(Handle()))
+            await collect_dataset(definition(Handle()))
     assert events == ["iterator closed", "source closed"]
 
 
@@ -73,7 +73,7 @@ async def test_braintrust_prefix_closes_stream_without_closing_injected_client()
         lambda _: httpx.Response(200, stream=body, headers={"x-bt-cursor": "cursor"})
     )
     async with httpx.AsyncClient(transport=transport) as client:
-        await load_dataset(
+        await collect_dataset(
             definition(BraintrustHandle("id", "pinned", client=client, api_key="fixture")), limit=1
         )
         assert body.closed
@@ -96,13 +96,13 @@ class AliasedModel(BaseModel):
 @pytest.mark.asyncio
 async def test_valid_model_alias_supports_native_and_saved_snapshot_roundtrip():
     native = AliasedModel(external_value=2)
-    snapshot = await load_dataset(
+    snapshot = await collect_dataset(
         definition(
             [{"input": native, "expected": "x"}],
             input=AliasedModel,
         )
     )
-    reloaded = await load_dataset(definition(snapshot.rows, input=AliasedModel))
+    reloaded = await collect_dataset(definition(snapshot.rows, input=AliasedModel))
     assert snapshot.cases[0].input.value == reloaded.cases[0].input.value == 2
     assert snapshot.summary["digest"] == reloaded.summary["digest"]
 
@@ -116,8 +116,8 @@ async def test_valid_model_alias_supports_native_and_saved_snapshot_roundtrip():
     ],
 )
 async def test_native_instances_cannot_bypass_field_validation(value, annotation):
-    with pytest.raises(DatasetError, match="greater than or equal"):
-        await load_dataset(definition([{"input": value, "expected": "x"}], input=annotation))
+    with pytest.raises(DatasetError, match="ValidationError"):
+        await collect_dataset(definition([{"input": value, "expected": "x"}], input=annotation))
 
 
 @dataclass
@@ -135,7 +135,7 @@ async def test_reused_native_instance_cannot_change_already_snapshotted_cases():
         yield {"id": "two", "input": reused, "expected": "x"}
         reused.values.append(3)
 
-    snapshot = await load_dataset(definition(rows(), input=MutableInput))
+    snapshot = await collect_dataset(definition(rows(), input=MutableInput))
     assert snapshot.rows[0]["input"] == {"values": [1]}
     assert snapshot.rows[1]["input"] == {"values": [1, 2]}
     assert snapshot.cases[0].input.values == [1]
@@ -149,22 +149,22 @@ class StructuredInput(TypedDict):
 
 @pytest.mark.asyncio
 async def test_dataclass_and_typed_dict_hydrate_from_json_without_coercing_primitives():
-    dataclass_snapshot = await load_dataset(
+    dataclass_snapshot = await collect_dataset(
         definition(
             [{"input": {"values": [1, 2]}, "expected": "x"}],
             input=MutableInput,
         )
     )
     assert dataclass_snapshot.cases[0].input == MutableInput([1, 2])
-    typed_snapshot = await load_dataset(
+    typed_snapshot = await collect_dataset(
         definition(
             [{"input": {"value": 2, "tags": ["a"]}, "expected": "x"}],
             input=StructuredInput,
         )
     )
     assert typed_snapshot.cases[0].input == {"value": 2, "tags": ["a"]}
-    with pytest.raises(DatasetError, match="integer|int"):
-        await load_dataset(
+    with pytest.raises(DatasetError, match="SchemaError"):
+        await collect_dataset(
             definition(
                 [{"input": {"value": "2", "tags": ["a"]}, "expected": "x"}],
                 input=StructuredInput,
@@ -187,7 +187,7 @@ async def test_custom_mapper_preserves_absent_null_and_provenance():
             provenance=row["provenance"],
         )
 
-    snapshot = await load_dataset(
+    snapshot = await collect_dataset(
         definition(
             source,
             input=list[int],
@@ -205,17 +205,17 @@ async def test_custom_mapper_preserves_absent_null_and_provenance():
     def mapping(row):
         return RawCase(input=row["x"], expected=row["y"], id="mapped", provenance={"manual": True})
 
-    mapped = await load_dataset(definition([{"x": "input", "y": "expected"}], map_row=mapping))
+    mapped = await collect_dataset(definition([{"x": "input", "y": "expected"}], map_row=mapping))
     assert mapped.cases[0].provenance == {"manual": True}
-    with pytest.raises(DatasetError, match="map_row must return RawCase"):
-        await load_dataset(definition([{"input": "x", "expected": "y"}], map_row=lambda r: r))
+    with pytest.raises(DatasetError, match="TypeError"):
+        await collect_dataset(definition([{"input": "x", "expected": "y"}], map_row=lambda r: r))
 
 
 @pytest.mark.asyncio
 async def test_empty_infinite_and_byte_limited_sources():
-    empty = await load_dataset(definition([]))
+    empty = await collect_dataset(definition([]))
     assert empty.rows == []
-    assert empty.summary["rows"] == 0
+    assert empty.summary["records_accepted"] == 0
     assert (
         empty.summary["digest"]
         == "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -226,14 +226,14 @@ async def test_empty_infinite_and_byte_limited_sources():
             yield {"input": "x", "expected": "x"}
 
     with pytest.raises(DatasetError, match="max_rows=3"):
-        await load_dataset(definition(forever()), limits=ReadLimits(max_rows=3))
+        await collect_dataset(definition(forever()), limits=ReadLimits(max_rows=3))
     with pytest.raises(DatasetError, match="max_record_bytes=10"):
-        await load_dataset(
+        await collect_dataset(
             definition([{"input": "x" * 100, "expected": "x"}]),
             limits=ReadLimits(max_record_bytes=10),
         )
     with pytest.raises(DatasetError, match="max_bytes=20"):
-        await load_dataset(
+        await collect_dataset(
             definition([{"input": "x" * 100, "expected": "x"}]), limits=ReadLimits(max_bytes=20)
         )
 
@@ -251,7 +251,7 @@ async def test_async_timeout_closes_source_generator():
             closed.append(True)
 
     with pytest.raises(DatasetError, match="TimeoutError"):
-        await load_dataset(definition(slow()), limits=ReadLimits(timeout_seconds=0.25))
+        await collect_dataset(definition(slow()), limits=ReadLimits(timeout_seconds=0.25))
     assert closed == [True]
 
 
@@ -283,7 +283,7 @@ async def test_cancelled_sync_factory_cleans_up_its_late_returned_iterator():
         return source
 
     descriptor = dataset(name="late-factory", schema=case_schema(input=str, expected=str))(factory)
-    task = asyncio.create_task(load_dataset(descriptor))
+    task = asyncio.create_task(collect_dataset(descriptor))
     assert await asyncio.to_thread(started.wait, 2)
     task.cancel()
     released.set()

@@ -31,25 +31,32 @@
   }
 
   function renderSummary() {
-    $('run-name').textContent = manifest.name;
+    $('run-name').textContent = Object.keys(manifest.summary.tasks).join(' · ');
     $('run-status').textContent = manifest.status;
     $('run-status').classList.add(manifest.status);
-    $('run-meta').textContent = `${manifest.dataset?.name ?? 'Dataset unavailable'} · ${manifest.dataset?.rows ?? 0} rows · ${manifest.options?.trials ?? 1} trial(s) · ${manifest.run_id}`;
+    $('run-meta').textContent = `${Object.keys(manifest.sources).length} source(s) · ${manifest.run_id}`;
     $('raw-manifest').textContent = json(manifest);
     for (const failure of manifest.failures ?? []) {
       if (failure.case_id == null) notice(`${failure.phase} · ${failure.type}`, failure.message);
     }
-    for (const [name, result] of Object.entries(manifest.reporting ?? {})) {
+    for (const [name, result] of (manifest.sinks ?? []).map(sink => [sink.name, sink])) {
       if (['failed', 'cancelled'].includes(result.status)) {
         notice(`Reporting ${result.status} · ${name}`, display(result.error ?? result.message ?? 'Export did not complete.'));
       }
     }
-    stat('Executions', `${manifest.counts?.completed ?? 0} / ${manifest.counts?.planned ?? 0}`,
-      `${manifest.counts?.failed ?? 0} errors · ${manifest.counts?.cancelled ?? 0} cancelled`);
-    for (const [name, score] of Object.entries(manifest.scores ?? {})) {
-      stat(name, numeric(score.mean), `${score.count} numeric · ${score.null_count} unscored · ${score.unavailable_count} unavailable`);
+    const trials = manifest.summary.trials;
+    stat('Executions', `${trials.completed} / ${trials.planned}`,
+      `${trials.task_failed + trials.scoring_failed} errors · ${trials.cancelled} cancelled`);
+    for (const [task, summary] of Object.entries(manifest.summary.tasks)) {
+      for (const [name, score] of Object.entries(summary.scores)) {
+        stat(`${task} · ${name}`, numeric(score.mean), `${score.count} numeric · min ${numeric(score.min)} · max ${numeric(score.max)}`);
+      }
     }
-    const gates = manifest.gates ?? [];
+    for (const [id, source] of Object.entries(manifest.sources)) {
+      if (source.error) notice(`Source ${id} · ${source.error.type}`, source.error.message);
+      if (!source.exhausted) notice('Incomplete source', `${source.name}: only a consumed prefix is represented.`);
+    }
+    const gates = manifest.requirements ?? [];
     stat('Quality gates', gates.length ? `${gates.filter(gate => gate.passed).length} / ${gates.length}` : 'Not set',
       gates.length ? gates.map(gate => gate.expression).join(' · ') : 'Execution status and quality are separate');
   }
@@ -135,8 +142,8 @@
     renderDetails(row);
     $('panel-provenance').replaceChildren(
       valueCard('Case source', json(row.provenance ?? {})),
-      valueCard('Dataset snapshot', json(manifest.dataset ?? {})),
-      valueCard('Definition & environment', json(manifest.provenance ?? {}))
+      valueCard('Source summary', json(manifest.sources[row.source_id] ?? {})),
+      valueCard('Definition & environment', json(manifest.info ?? {}))
     );
     renderErrors(row);
     showTab(activeTab);
@@ -160,7 +167,8 @@
     cases.forEach((row, index) => {
       if (query && !json(row).toLowerCase().includes(query)) return;
       if (status === 'unscored' && !(row.scores ?? []).some(score => score.value === null)) return;
-      if (!['all', 'unscored'].includes(status) && row.status !== status) return;
+      if (status === 'failed' && !['task_failed', 'scoring_failed'].includes(row.status)) return;
+      if (!['all', 'unscored', 'failed'].includes(status) && row.status !== status) return;
       visible.push(index);
       const button = text('button', '', 'case');
       button.type = 'button';

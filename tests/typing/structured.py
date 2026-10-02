@@ -23,5 +23,5 @@ def nested_values(context: mic.ScoreContext[Ticket, Decision, Decision, Metadata
 @mic.eval(  # expect-error
     name="wrong-structured-input", dataset=tickets, output=Decision, scorers=[]
 )
-def wrong_input(ctx: mic.TaskContext[Decision, Metadata], ticket: str) -> Decision:
+def wrong_input(ctx: mic.TaskContext[Metadata], ticket: str) -> Decision:
     return Decision("bug")

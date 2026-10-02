@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INSPECT_INSTALL = """import importlib.util, importlib.metadata, json, mic, sys
 from typing import get_args
 
-assert get_args(mic.TaskContext[int]) == (int, mic.JsonObject)
+assert get_args(mic.TaskContext[mic.JsonObject]) == (mic.JsonObject,)
 assert get_args(mic.ScoreContext[str, int]) == (str, int, int, mic.JsonObject)
 assert get_args(mic.ScoreContext[str, int, bool]) == (str, int, bool, mic.JsonObject)
 
@@ -314,19 +314,32 @@ def main():
                     ],
                 )
             )
-            assert manifest["counts"]["completed"] == 6 and manifest["counts"]["failed"] == 0
-            assert manifest["scores"]["label"]["mean"] == 1.0
-            assert manifest["scores"]["evidence"]["mean"] == 1.0
-            assert manifest["scores"]["label"]["count"] == 6
-            assert (output / "report.html").is_file()
+            assert (
+                manifest["summary"]["trials"]["completed"] == 6
+                and manifest["summary"]["trials"]["task_failed"] == 0
+            )
+            assert (
+                next(iter(manifest["summary"]["tasks"].values()))["scores"]["label"]["mean"] == 1.0
+            )
+            assert (
+                next(iter(manifest["summary"]["tasks"].values()))["scores"]["evidence"]["mean"]
+                == 1.0
+            )
+            assert (
+                next(iter(manifest["summary"]["tasks"].values()))["scores"]["label"]["count"] == 6
+            )
+            assert (output / "events.jsonl").is_file()
             run(f"rerender_{suffix}", [mic, "report", output, "--output", output / "review.html"])
             assert "structured.classify" in (output / "review.html").read_text(encoding="utf-8")
             manifests.append(manifest)
         assert snapshots[0]["dataset"]["digest"] == snapshots[1]["dataset"]["digest"]
-        assert manifests[0]["dataset"]["digest"] == manifests[1]["dataset"]["digest"]
+        assert (
+            next(iter(manifests[0]["sources"].values()))["digest"]
+            == next(iter(manifests[1]["sources"].values()))["digest"]
+        )
         evidence["structured_smoke"] = {
             "memory_and_file_digests_match": True,
-            "digest": manifests[0]["dataset"]["digest"],
+            "digest": next(iter(manifests[0]["sources"].values()))["digest"],
             "cases_per_source": 2,
             "trials_per_source": 3,
             "executions_per_source": 6,

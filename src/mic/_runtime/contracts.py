@@ -1,4 +1,4 @@
-"""Internal normalized values shared by materialization and execution."""
+"""Internal normalized values shared by stream reading and execution."""
 
 from dataclasses import dataclass, field
 

@@ -27,7 +27,7 @@ def exact(context: ScoreContext[str, str, str, Meta]) -> float:
     trials=1,
     concurrency=4,
 )
-def baseline(context: TaskContext[str, Meta], text: str) -> str:
+def baseline(context: TaskContext[Meta], text: str) -> str:
     text = text.lower()
     if "bug" in text:
         return "bug"
@@ -42,7 +42,7 @@ def baseline(context: TaskContext[str, Meta], text: str) -> str:
     trials=1,
     concurrency=4,
 )
-def fixed(context: TaskContext[str, Meta], text: str) -> str:
+def fixed(context: TaskContext[Meta], text: str) -> str:
     return classify_fixed(text)
 
 

@@ -62,10 +62,10 @@ def test_top_level_api_is_intentional() -> None:
 
 
 def test_extension_contracts_have_explicit_modules() -> None:
-    from mic.reporters import Reporter
+    from mic.sinks import ResultSink
     from mic.sources import DatasetSource, ReadContext, RecordError
 
     assert DatasetSource is mic.DatasetSource
     assert ReadContext is mic.ReadContext
     assert RecordError is mic.RecordError
-    assert Reporter is not None
+    assert ResultSink is not None

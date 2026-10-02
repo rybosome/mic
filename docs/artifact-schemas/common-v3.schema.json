@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/common-v3.schema.json",
+  "$defs": {
+    "statistics": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mean": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "count",
+        "mean",
+        "min",
+        "max"
+      ],
+      "additionalProperties": false
+    },
+    "trials": {
+      "type": "object",
+      "properties": {
+        "planned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "task_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scoring_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scoring_skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "task_ms": {
+          "$ref": "common-v3.schema.json#/$defs/statistics"
+        },
+        "scoring_ms": {
+          "$ref": "common-v3.schema.json#/$defs/statistics"
+        },
+        "total_ms": {
+          "$ref": "common-v3.schema.json#/$defs/statistics"
+        }
+      },
+      "required": [
+        "planned",
+        "completed",
+        "task_failed",
+        "scoring_failed",
+        "scoring_skipped",
+        "cancelled",
+        "task_ms",
+        "scoring_ms",
+        "total_ms"
+      ],
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "type",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "records_seen": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "records_accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "records_rejected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exhausted": {
+          "type": "boolean"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "common-v3.schema.json#/$defs/failure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "records_seen",
+        "records_accepted",
+        "records_rejected",
+        "exhausted",
+        "digest",
+        "provenance",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "details": {
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "common-v3.schema.json#/$defs/failure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "status",
+        "events",
+        "details",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "row_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trial": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "task_failed",
+            "scoring_failed",
+            "cancelled"
+          ]
+        },
+        "input": {},
+        "expected": {},
+        "output": {},
+        "metadata": {},
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "object"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "metadata": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "value",
+              "metadata"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "phase": {
+                "type": "string",
+                "minLength": 1
+              },
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string"
+              },
+              "scorer": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "phase",
+              "type",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "latency": {
+          "type": "object",
+          "properties": {
+            "task_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "scoring_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "total_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "task_ms",
+            "scoring_ms",
+            "total_ms"
+          ],
+          "additionalProperties": false
+        },
+        "task_metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "case_id",
+        "row_index",
+        "trial",
+        "status",
+        "input",
+        "scores",
+        "errors",
+        "latency"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "completed",
+                  "scoring_failed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "output"
+            ]
+          }
+        }
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "scores": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "common-v3.schema.json#/$defs/statistics"
+                }
+              },
+              "trials": {
+                "$ref": "common-v3.schema.json#/$defs/trials"
+              }
+            },
+            "required": [
+              "scores",
+              "trials"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "trials": {
+          "$ref": "common-v3.schema.json#/$defs/trials"
+        }
+      },
+      "required": [
+        "tasks",
+        "trials"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

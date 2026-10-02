@@ -77,7 +77,7 @@ class SourceRead:
         else:
             raise ConfigurationError("Dataset source must be a DatasetSource or iterable of rows")
 
-    async def rows(self) -> AsyncIterator[object]:
+    async def rows(self) -> AsyncGenerator[object]:
         if self._used:
             raise DatasetError("A read may only be iterated once; reopen the source")
         self._used = True

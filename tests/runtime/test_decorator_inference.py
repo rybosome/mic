@@ -11,6 +11,7 @@ from typing import Annotated, Any, TypeVar
 import pytest
 
 import mic
+from tests.runtime.helpers import cases, scores
 
 
 @dataclass
@@ -38,9 +39,9 @@ def test_default_names_and_explicit_overrides(tmp_path):
     assert mic.preflight(classify)["tasks_executed"] == 0
     result = mic.run(classify, output=tmp_path)
     assert result.exit_code == 0
-    assert result.cases[0]["output"] == {"size": 5}
-    assert result.manifest["name"] == "classify"
-    assert result.manifest["scores"]["accuracy"]["mean"] == 1
+    assert cases(result)[0]["output"] == {"size": 5}
+    assert set(result.summary.tasks) == {"classify"}
+    assert scores(result)["accuracy"].mean == 1
     assert mic.dataset(name="stable", input=str, expected=bool)(tickets.factory).name == "stable"
     assert mic.scorer(name="stable")(accuracy.function).name == "stable"
     assert (
@@ -145,14 +146,14 @@ def test_return_forms_are_inferred_without_calling_task(
         return compute(value)
 
     def sync_context(ctx, value):
-        assert ctx.require_expected() is True
+        assert not hasattr(ctx, "expected")
         return compute(value)
 
     async def async_input(value):
         return compute(value)
 
     async def async_context(ctx, value):
-        assert ctx.require_expected() is True
+        assert not hasattr(ctx, "expected")
         return compute(value)
 
     fn = (
@@ -167,9 +168,9 @@ def test_return_forms_are_inferred_without_calling_task(
     assert not calls
     result = mic.run(spec, output=tmp_path)
     assert result.exit_code == 0
-    assert result.cases[0]["output"] == {"size": 5}
+    assert cases(result)[0]["output"] == {"size": 5}
     if wrapped:
-        assert result.cases[0]["task_metadata"] == {"source": "test"}
+        assert cases(result)[0]["task_metadata"] == {"source": "test"}
 
 
 @pytest.mark.parametrize(
@@ -257,7 +258,7 @@ def test_bad_return_is_still_validated(tmp_path):
 
     result = mic.run(task, output=tmp_path)
     assert result.exit_code == 1
-    assert result.cases[0]["errors"][0]["phase"] == "schema"
+    assert cases(result)[0]["errors"][0]["phase"] == "schema"
 
 
 def test_local_forward_reference_requires_explicit_output():

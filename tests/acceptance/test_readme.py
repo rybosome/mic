@@ -98,12 +98,12 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     assert opened.call_count == 2
     first = json.loads(Path(".mic/tickets/run.json").read_text())
     repeated = json.loads(Path(".mic/tickets-v2/run.json").read_text())
-    assert first["scores"]["accuracy"]["mean"] == 1
-    assert first["counts"]["completed"] == 3
-    assert repeated["counts"]["completed"] == 15
-    assert repeated["options"]["trials"] == 5
-    assert repeated["options"]["concurrency"] == 2
-    assert repeated["options"]["timeout"] == 30
+    assert first["summary"]["tasks"]["classify"]["scores"]["accuracy"]["mean"] == 1
+    assert first["summary"]["trials"]["completed"] == 3
+    assert repeated["summary"]["trials"]["completed"] == 15
+    assert repeated["info"]["tasks"]["classify"]["options"]["trials"] == 5
+    assert repeated["info"]["tasks"]["classify"]["options"]["concurrency"] == 2
+    assert repeated["info"]["tasks"]["classify"]["options"]["timeout"] == 30
     assert Path(".mic/tickets/report.html").is_file()
 
 
@@ -131,8 +131,14 @@ def test_jsonl_replacement_preserves_dataset_and_scores(quickstart, tmp_path: Pa
     assert main(["run", "ticket_eval:classify", "--output", "file"]) == 0
     native = json.loads(Path("native/run.json").read_text())
     file = json.loads(Path("file/run.json").read_text())
-    assert native["dataset"]["digest"] == file["dataset"]["digest"]
-    assert native["scores"] == file["scores"]
+    assert (
+        next(iter(native["sources"].values()))["digest"]
+        == next(iter(file["sources"].values()))["digest"]
+    )
+    assert (
+        native["summary"]["tasks"]["classify"]["scores"]
+        == file["summary"]["tasks"]["classify"]["scores"]
+    )
 
 
 def test_wrong_labels_are_scores_not_execution_failures(quickstart) -> None:
@@ -142,13 +148,24 @@ def test_wrong_labels_are_scores_not_execution_failures(quickstart) -> None:
     )
     assert main(["run", "ticket_eval:classify", "--output", "ungated"]) == 0
     assert (
-        main(["run", "ticket_eval:classify", "--require", "accuracy>=0.9", "--output", "gated"])
+        main(
+            [
+                "run",
+                "ticket_eval:classify",
+                "--require",
+                'tasks["classify"].scores["accuracy"].mean>=0.9',
+                "--output",
+                "gated",
+            ]
+        )
         == 1
     )
     result = json.loads(Path("gated/run.json").read_text())
-    assert result["counts"]["failed"] == 0
-    assert result["scores"]["accuracy"]["mean"] == pytest.approx(1 / 3)
-    assert Path("gated/report.html").is_file()
+    assert result["summary"]["trials"]["task_failed"] == 0
+    assert result["summary"]["tasks"]["classify"]["scores"]["accuracy"]["mean"] == pytest.approx(
+        1 / 3
+    )
+    assert Path("gated/events.jsonl").is_file()
 
 
 def test_model_failure_keeps_other_results_and_closes_clients(quickstart) -> None:
@@ -163,10 +180,10 @@ def test_model_failure_keeps_other_results_and_closes_clients(quickstart) -> Non
     client.responses.parse.side_effect = fail_one
     assert main(["run", "ticket_eval:classify", "--output", "failed"]) == 1
     result = json.loads(Path("failed/run.json").read_text())
-    assert result["counts"]["failed"] == 1
-    assert result["scores"]["accuracy"]["count"] == 2
+    assert result["summary"]["trials"]["task_failed"] == 1
+    assert result["summary"]["tasks"]["classify"]["scores"]["accuracy"]["count"] == 2
     assert constructor.return_value.__exit__.call_count == 3
-    assert Path("failed/report.html").is_file()
+    assert Path("failed/events.jsonl").is_file()
 
 
 @pytest.mark.parametrize("answer", [None, {"label": "unknown"}, {"label": 42}])
@@ -177,8 +194,8 @@ def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, a
     )
     assert main(["run", "ticket_eval:classify", "--output", "invalid"]) == 1
     result = json.loads(Path("invalid/run.json").read_text())
-    assert result["counts"]["failed"] == 3
-    assert result["scores"]["accuracy"]["count"] == 0
+    assert result["summary"]["trials"]["task_failed"] == 3
+    assert result["summary"]["tasks"]["classify"]["scores"]["accuracy"]["count"] == 0
     assert constructor.return_value.__exit__.call_count == 3
 
 
@@ -254,23 +271,31 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     client.responses.parse.side_effect = predict
     command = shlex.split(snippet("cli-gates").replace("\\\n", " "))[1:]
     if relaxed_accuracy:
-        command[command.index("accuracy>=0.9")] = "accuracy>=0.6"
+        command[command.index('tasks["classify"].scores["accuracy"].mean>=0.9')] = (
+            'tasks["classify"].scores["accuracy"].mean>=0.6'
+        )
     assert main([*command, "--output", "metrics", "--json"]) == (1 if miss_bug else 0)
     manifest = json.loads(Path("metrics/run.json").read_text())
     assert json.loads(capsys.readouterr().out) == manifest
-    assert [gate["passed"] for gate in manifest["gates"]] == [
+    assert [gate["passed"] for gate in manifest["requirements"]] == [
         not miss_bug or relaxed_accuracy,
         not miss_bug,
     ]
-    assert manifest["counts"]["completed"] == 15
-    assert manifest["counts"]["failed"] == 0
-    assert Path("metrics/report.html").is_file()
-    assert manifest["scores"]["accuracy"]["mean"] == pytest.approx(2 / 3 if miss_bug else 1)
-    recall = manifest["scores"]["bug_recall"]
-    assert recall["count"] == 5 and recall["null_count"] == 10
+    assert manifest["summary"]["trials"]["completed"] == 15
+    assert manifest["summary"]["trials"]["task_failed"] == 0
+    assert Path("metrics/events.jsonl").is_file()
+    assert manifest["summary"]["tasks"]["classify"]["scores"]["accuracy"]["mean"] == pytest.approx(
+        2 / 3 if miss_bug else 1
+    )
+    recall = manifest["summary"]["tasks"]["classify"]["scores"]["bug_recall"]
+    assert recall["count"] == 5 and manifest["summary"]["trials"]["scoring_skipped"] == 10
     assert recall["mean"] == (0 if miss_bug else 1)
-    cases = [json.loads(line) for line in Path("metrics/cases.jsonl").read_text().splitlines()]
-    bug = next(case for case in cases if case["case_id"] == "upload")
+    cases = [
+        e["result"]
+        for line in Path("metrics/events.jsonl").read_text().splitlines()
+        if (e := json.loads(line))["type"] == "trial_finished"
+    ]
+    bug = next(case for case in cases if case["label"] == "upload")
     assert bug["scores"][0]["metadata"] == {
         "body_length": len("The app closes whenever I upload a PDF."),
     }
@@ -308,11 +333,11 @@ def test_async_task_and_context_examples(quickstart, with_context, missing_outpu
     assert request["text_format"] is module.Classification
     assert request["store"] is False
     result = json.loads(Path("async/run.json").read_text())
-    assert result["counts"]["failed"] == (6 if missing_output else 0)
+    assert result["summary"]["trials"]["task_failed"] == (6 if missing_output else 0)
     if with_context:
         assert {record.getMessage() for record in caplog.records} == {
             f"case={case} trial={trial}"
-            for case in ("upload", "export", "invoice")
+            for case in (f"{result['run_id']}:s0:r{i}" for i in range(3))
             for trial in (1, 2)
         }
 
@@ -340,6 +365,6 @@ def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels
         assert outcome.value.code == (1 if wrong_labels else 0)
     result = namespace["result"]
     assert result.exit_code == (1 if wrong_labels else 0)
-    assert result.manifest["counts"]["completed"] == 15
-    assert result.manifest["options"]["concurrency"] == 2
-    assert (result.output_dir / "report.html").is_file()
+    assert result.summary.trials.completed == 15
+    assert result.info.tasks["classify"]["options"]["concurrency"] == 2
+    assert result.output_dir is None

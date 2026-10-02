@@ -10,6 +10,7 @@ from typing import get_args
 import pytest
 
 import mic
+from tests.runtime.helpers import cases
 
 
 @mic.dataset(name="numbers", schema=mic.case_schema(input=int, expected=int))
@@ -26,17 +27,17 @@ def test_context_default_arguments_and_explicit_overrides():
     class Metadata:
         segment: str
 
-    assert get_args(mic.TaskContext[int]) == (int, mic.JsonObject)
-    assert get_args(mic.TaskContext[int, Metadata]) == (int, Metadata)
+    assert get_args(mic.TaskContext) == ()
+    assert get_args(mic.TaskContext[Metadata]) == (Metadata,)
     assert get_args(mic.ScoreContext[str, int]) == (str, int, int, mic.JsonObject)
     assert get_args(mic.ScoreContext[str, int, bool]) == (str, int, bool, mic.JsonObject)
     assert get_args(mic.ScoreContext[str, int, bool, Metadata]) == (str, int, bool, Metadata)
-    assert mic.TaskContext[int]("a", 1, 4, {}).require_expected() == 4
+    assert mic.TaskContext("a", 1, {}).metadata == {}
     assert mic.ScoreContext[str, int]("two", 4, 4, {}).output == 4
     with pytest.raises(TypeError):
         mic.ScoreContext[int]
     with pytest.raises(TypeError):
-        mic.TaskContext[int, int, int]
+        mic.TaskContext[int, int]
 
 
 @pytest.mark.parametrize("contextual", [False, True])
@@ -56,7 +57,7 @@ async def test_task_forms_preserve_dispatch_and_result_metadata(
         return answer(value)
 
     def with_context(context, value, /, *, unused=True):
-        assert context.require_expected() == 4
+        assert context.trial == 1 and not hasattr(context, "expected")
         return answer(value)
 
     async def async_input(value):
@@ -64,7 +65,7 @@ async def test_task_forms_preserve_dispatch_and_result_metadata(
         return answer(value)
 
     async def async_context(context, value):
-        assert context.require_expected() == 4
+        assert context.trial == 1 and not hasattr(context, "expected")
         return await async_input(value)
 
     fn = (
@@ -78,10 +79,10 @@ async def test_task_forms_preserve_dispatch_and_result_metadata(
     assert spec.function.__module__ == fn.__module__
     result = await mic.arun(spec, output=tmp_path)
     assert result.exit_code == 0
-    assert result.cases[0]["output"] == 4
+    assert cases(result)[0]["output"] == 4
     assert (threads == [owner]) == asynchronous
     if wrapped_result:
-        assert result.cases[0]["task_metadata"] == {"source": "task"}
+        assert cases(result)[0]["task_metadata"] == {"source": "task"}
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -98,7 +99,7 @@ def test_type_error_is_not_retried(tmp_path, asynchronous):
     result = mic.run(define(async_task if asynchronous else task), output=tmp_path)
     assert result.exit_code == 1
     assert calls == [2]
-    assert result.cases[0]["errors"][0]["phase"] == "task"
+    assert cases(result)[0]["errors"][0]["phase"] == "task"
 
 
 def test_signature_is_selected_once_not_by_parameter_names(tmp_path, monkeypatch):
@@ -159,7 +160,7 @@ def test_bound_partial_and_decorated_functions(tmp_path):
         return Multiplier().double(*args, **kwargs)
 
     for index, fn in enumerate((Multiplier().double, partial(multiply, factor=2), decorated)):
-        assert mic.run(define(fn), output=tmp_path / str(index)).cases[0]["output"] == 4
+        assert cases(mic.run(define(fn), output=tmp_path / str(index)))[0]["output"] == 4
 
 
 async def test_sync_function_returning_awaitable(tmp_path):
@@ -171,4 +172,4 @@ async def test_sync_function_returning_awaitable(tmp_path):
 
     result = await mic.arun(define(task), output=tmp_path)
     assert result.exit_code == 0
-    assert result.cases[0]["output"] == 4
+    assert cases(result)[0]["output"] == 4

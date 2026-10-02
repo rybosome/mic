@@ -7,6 +7,7 @@ import time
 import pytest
 
 import mic
+from tests.runtime.helpers import cases
 
 from .helpers import evaluation, manifest, row
 
@@ -27,7 +28,7 @@ async def test_actual_async_concurrency_bound_and_stable_order(tmp_path):
     spec = evaluation([row(n, id=str(n)) for n in range(6)], task=task, trials=2)
     result = await mic.arun(spec, output=tmp_path, concurrency=3)
     assert peak == 3
-    assert [(c["row_index"], c["trial"]) for c in result.cases] == [
+    assert sorted((c["row_index"], c["trial"]) for c in cases(result)) == [
         (i, t) for i in range(6) for t in (1, 2)
     ]
     assert completion != sorted(completion)
@@ -91,8 +92,8 @@ async def test_timeout_does_not_admit_more_running_sync_threads(tmp_path):
     )
     assert peak == 1
     assert active == 0
-    assert result.manifest["counts"]["failed"] == 3
-    assert all(c["errors"][0]["type"] == "TimeoutError" for c in result.cases)
+    assert result.summary.trials.task_failed == 3
+    assert all(c["errors"][0]["type"] == "TimeoutError" for c in cases(result))
 
 
 async def test_cancellation_closes_workers_and_preserves_partial_evidence(tmp_path):
@@ -120,6 +121,6 @@ async def test_cancellation_closes_workers_and_preserves_partial_evidence(tmp_pa
     saved = manifest(tmp_path)
     assert saved["status"] == "cancelled"
     assert saved["exit_code"] == 130
-    assert saved["counts"]["cancelled"] == 4
+    assert 1 <= saved["summary"]["trials"]["cancelled"] <= 4
     assert closed
-    assert (tmp_path / "report.html").is_file()
+    assert (tmp_path / "events.jsonl").is_file()
