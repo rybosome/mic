@@ -1,49 +1,50 @@
-# mic
+# 🎤 mic
 
 [![CI](https://github.com/rybosome/mic/actions/workflows/ci.yml/badge.svg)](https://github.com/rybosome/mic/actions/workflows/ci.yml)
 
-**Did that prompt, model, or application change actually improve the answers?**
+Typed evaluations for LLMs, agents, and other nondeterministic systems. Define
+your cases, scoring functions, and application call; Mic runs repeated trials
+and saves inspectable results locally.
 
-Mic is a small Python evaluation harness for systems whose answers can vary.
-Give it examples, the code you want to evaluate, and a way to score the results.
-Run the evaluation repeatedly, then inspect what happened, case by case.
+## Install
 
-Use it to test an LLM classifier, score an agent's work, or evaluate another ML
-application. You keep your application code and choose your own models and scoring
-logic; Mic handles dataset validation, bounded concurrent execution, repeated
-trials, and local evidence. No hosted evaluation platform is required.
-
-## Evaluate a support-ticket classifier
-
-Suppose you're using an LLM to sort support messages into bugs, feature requests,
-and questions. Before changing its prompt or model, give yourself a repeatable check.
-
-With Python 3.12+, install Mic and the SDK used by this example:
+Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
 ```console
-python -m pip install "mic-evals[pydantic]" openai
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install mic-evals
 ```
 
-Mic's core has no third-party runtime dependencies. This example opts into Pydantic
-and the OpenAI SDK to share a typed output contract between Mic and the model call.
-It uses [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
-with [GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini);
-replace the classifier function with your own model or application call.
-Set `OPENAI_API_KEY` in your environment using your usual secret-management method.
-Running it sends the example messages to OpenAI and incurs normal API charges.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
+Already using a virtual environment? Skip its creation and activation.
+You can substitute `python -m pip install` for `uv pip install`.
 
-Save this complete example as `ticket_eval.py`:
+## Quickstart: evaluate a support-ticket classifier
 
+An evaluation has three parts: **cases to test**, **what counts as a good answer**,
+and **the code to call**. This example classifies tickets as bugs, feature requests,
+or questions.
+
+```console
+uv pip install 'mic-evals[pydantic]' openai
+```
+
+Set `OPENAI_API_KEY` in your environment. Running this example sends tickets to
+OpenAI and incurs API charges. Save the following **three Python blocks together**
+as `ticket_eval.py` ([complete file](examples/ticket_eval.py)).
+
+### 1. Define the dataset
+
+Each case pairs a structured input with an expected answer.
+
+<!-- snippet: quickstart-dataset -->
 ```python
 from typing import Literal
 
 from pydantic import BaseModel
 
 import mic
-
-##
-## Define a dataset
-##
 
 
 class Ticket(BaseModel):
@@ -76,23 +77,27 @@ def tickets() -> list[mic.RawCase]:
             expected=Classification(label="question"),
         ),
     ]
+```
 
+### 2. Define the scoring
 
-##
-## Define scoring
-##
+Give a correct label `1`, an incorrect label `0`.
 
-
+<!-- snippet: quickstart-scoring -->
+```python
 @mic.scorer(name="accuracy")
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
+```
 
+### 3. Define the task
 
-##
-## Define the task
-##
+Call your application and return its result. Here, the
+[OpenAI structured-output parser](https://developers.openai.com/api/docs/guides/structured-outputs)
+uses the same `Classification` model as Mic.
 
-
+<!-- snippet: quickstart-task -->
+```python
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
     from openai import OpenAI
@@ -114,84 +119,56 @@ def classify(ticket: Ticket) -> Classification:
         return response.output_parsed
 ```
 
-`Ticket` gives the task typed inputs; `Classification` defines both the expected
-answer and the model's structured output. The SDK derives its output schema from
-that class and parses the response into it. Mic validates dataset values and task
-outputs against the same types, so the scorer works with objects, not JSON parsing
-or string cleanup. `ScoreContext[Ticket, Classification]` defaults the expected
-value to the output type and metadata to a JSON object. Scorers require expected
-values by default; use `requires_expected=False` only for reference-free metrics.
-
-A valid but wrong label scores `0`; the right label scores `1`. Invalid output or
-no parsed classification (for example, a refusal) is an execution failure, not a
-wrong answer. These three cases are illustrative; a useful evaluation needs a
-larger, representative set of labeled tickets.
-
-Run it from the directory containing `ticket_eval.py`, then open the report:
+### Run and inspect
 
 ```console
-mic run ticket_eval:classify --output .mic/tickets-first
-mic report .mic/tickets-first --open
+mic run ticket_eval:classify --output .mic/tickets
+mic report .mic/tickets --open
 ```
 
-That's three classifier calls. The report shows each message, its expected label,
-the actual response, and its score, alongside aggregate accuracy and execution
-failures. Review low-scoring cases for wrong answers or ambiguous expected labels,
-and execution failures for calls that did not produce a valid classification.
+See each ticket, expected answer, prediction, and score in a standalone HTML report;
+JSON/JSONL evidence is saved alongside it.
 
-Each run saves its dataset snapshot, per-trial results, and summary as JSON/JSONL,
-plus a self-contained HTML report you can open without a server or network.
-Explicit output directories must be empty; omit `--output` to get a unique directory
-automatically. A successfully executed run can still have poor scores—execution
-success and answer quality are separate.
+## Datasets: keep the evaluation, change the source
 
-The same code lives in [examples/ticket_eval.py](examples/ticket_eval.py). To explore
-the report without credentials or API charges, the repository also includes an
-[offline classification demo](examples/triage.py) with deliberately imperfect rules;
-see the [walkthrough](docs/verification.md).
+### Dataclasses or Pydantic
 
-## Repeat, check, improve
+Mic supports ordinary dataclasses without extra dependencies:
 
-### Look for variation
+<!-- snippet: dataclasses -->
+```python
+from dataclasses import dataclass
+from typing import Literal
 
-Run each message five times, with at most two tasks executing concurrently:
 
-```console
-mic run ticket_eval:classify --trials 5 --concurrency 2 --output .mic/tickets-repeat
+@dataclass
+class Ticket:
+    subject: str
+    body: str
+
+
+@dataclass
+class Classification:
+    label: Literal["bug", "feature", "question"]
 ```
 
-This makes 15 classifier calls. Inspect individual trials as well as the mean:
-one message that fails intermittently deserves attention even if the average looks
-good. Repetition gives you more observations, not proof of statistical significance.
+The quickstart uses optional Pydantic models to share an output schema with OpenAI.
+Both work with Mic's dataset and output schemas. See [structured schemas](docs/schemas.md).
 
-Change the prompt or model in `classify`, run again into a fresh directory,
-and review both reports against the same labeled cases. Keep the evaluation set
-representative rather than tuning only to these three examples.
+### Local JSONL
 
-### Make quality a check
+Save these records as `tickets.jsonl` beside `ticket_eval.py`:
 
-Add a score requirement when you're ready to use the evaluation locally or in CI:
-
-```console
-mic run ticket_eval:classify --trials 5 --require 'accuracy>=0.9'
-```
-
-The command exits nonzero if execution fails or mean accuracy falls below `0.9`.
-That threshold is illustrative; choose one appropriate to your dataset and the cost
-of a wrong answer. A failed quality gate still leaves local results to investigate.
-
-### Grow the dataset without changing the task
-
-Save the same cases as `tickets.jsonl` beside `ticket_eval.py`:
-
+<!-- snippet: tickets-jsonl -->
 ```jsonl
 {"id":"upload","input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
 {"id":"export","input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
 {"id":"invoice","input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
 ```
 
-Replace the `tickets` definition with this, adding the two imports:
+Replace the quickstart's `tickets` factory and add these imports:
 
+<!-- snippet: file-dataset -->
 ```python
 from pathlib import Path
 
@@ -203,41 +180,257 @@ def tickets() -> FileHandle:
     return FileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
-Mic hydrates the JSON objects into `Ticket` and `Classification` instances and
-rejects invalid cases before calling the model. The task, scorer, and run command
-stay the same. Add cases from real failures as
-you encounter them—for example, a message that sounds like a feature request but
-describes an existing feature that stopped working.
+Mic hydrates the JSON objects into your declared types and validates cases before
+running the task. The scorer, task, and run commands do not change.
 
-## Bring your own application
+### BigQuery
 
-The same pattern applies beyond classification: score extracted fields, check an
-agent's result against a rubric, or compute a metric for an ML prediction. Tasks
-and scorers are Python functions, so they can call your existing code. Sync and
-async functions are supported; scripts can use `mic.run()` and notebooks can use
-`await mic.arun()` instead of the CLI. Tasks normally take just their input; when
-you need the case ID, trial number, or metadata, use `(ctx, input)` with a typed
-`TaskContext`. See [callback signatures and context types](docs/api.md#callback-signatures-and-context-types).
+```console
+uv pip install 'mic-evals[bigquery]'
+```
 
-- **Structured data:** use ordinary dataclasses for inputs, outputs, and expected
-  values; see the [structured example](examples/structured.py) and [schema guide](docs/schemas.md).
-- **Other dataset sources:** load local files, BigQuery queries, or versioned
-  Braintrust datasets with optional integrations; see [providers](docs/providers.md).
-- **Remote reporting:** optionally export results to a Braintrust experiment after
-  saving local evidence. Dataset storage and reporting are independent; see [reporting](docs/reporting.md).
+Configure Application Default Credentials. Replace the dataset factory with this
+one, using your billing project, location, and table (columns: `id`, `subject`,
+`body`, `label`):
 
-## Before you use it
+<!-- snippet: bigquery-dataset -->
+```python
+from mic.providers.bigquery import BigQueryHandle
 
-Mic is an early release, and its public API may change before a stable release.
-It runs finite, bounded datasets locally—not distributed jobs or an application
-hosting service. Synchronous callbacks must finish cooperatively: a timeout cannot
-forcibly stop a running Python thread.
 
-Reports and artifacts contain your actual evaluation data, including inputs and
-outputs. They are **not automatically redacted**. Treat them as sensitive, keep
-credentials out of your cases, and review evidence before sharing or committing it.
-Your model calls and optional cloud integrations have their own costs and data-handling
-policies. See [artifact handling](docs/artifacts.md) for details.
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+def tickets() -> BigQueryHandle:
+    return BigQueryHandle(
+        billing_project="your-project",
+        location="US",
+        maximum_bytes_billed=10_000_000,
+        sql="""
+            SELECT id, STRUCT(subject, body) AS input, STRUCT(label) AS expected
+            FROM `your-project.evals.tickets`
+            ORDER BY id
+        """,
+    )
+```
 
-[API reference](docs/api.md) · [Verification](docs/verification.md) ·
+### Braintrust
+
+```console
+uv pip install 'mic-evals[braintrust]'
+```
+
+Set `BRAINTRUST_API_KEY`. Use an existing dataset with the same `input` and
+`expected` objects as the JSONL above, pinned to an explicit version:
+
+<!-- snippet: braintrust-dataset -->
+```python
+from mic.providers.braintrust import BraintrustHandle
+
+
+@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+def tickets() -> BraintrustHandle:
+    return BraintrustHandle(
+        dataset_id="your-dataset-id",
+        xact_id="your-pinned-version",
+    )
+```
+
+Factories describe sources; reading a cloud dataset contacts that service.
+See [provider setup and limits](docs/providers.md).
+
+## Scoring: multiple metrics and supporting evidence
+
+Each scorer produces **one named metric**;
+attach multiple scorers to an evaluation. Return a number, `mic.Score` with JSON
+metadata, or `None` when a metric does not apply.
+
+Replace the quickstart's scorer block with:
+
+<!-- snippet: extended-scoring -->
+```python
+@mic.scorer(name="accuracy")
+def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> mic.Score:
+    expected = ctx.require_expected().label
+    return mic.Score(
+        value=float(ctx.output.label == expected),
+        metadata={"body_length": len(ctx.input.body)},
+    )
+
+
+@mic.scorer(name="bug_recall")
+def bug_recall(ctx: mic.ScoreContext[Ticket, Classification]) -> float | None:
+    if ctx.require_expected().label != "bug":
+        return None
+    return float(ctx.output.label == "bug")
+```
+
+Then change the task's decorator to:
+
+<!-- snippet: multiple-scorers -->
+```python
+@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy, bug_recall])
+```
+
+See [scoring contracts](docs/api.md).
+
+## Tasks: sync, async, and execution context
+
+Mic accepts async tasks and scorers; they can be mixed in the same evaluation.
+
+### Use an async client
+
+Replace the quickstart's task with this async equivalent. OpenAI supports
+[`AsyncOpenAI` with awaited structured-output parsing](https://developers.openai.com/cookbook/examples/partners/eval_driven_system_design/receipt_inspection).
+The dataset, scorer, and CLI commands stay the same.
+
+<!-- snippet: async-task -->
+```python
+@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+async def classify(ticket: Ticket) -> Classification:
+    from openai import AsyncOpenAI
+
+    async with AsyncOpenAI(timeout=30, max_retries=0) as client:
+        response = await client.responses.parse(
+            model="gpt-4.1-mini",
+            instructions=(
+                "Classify the support ticket as "
+                "bug (broken behavior), feature (new capability), or question (how-to)."
+            ),
+            input=ticket.model_dump_json(),
+            text_format=Classification,
+            store=False,
+        )
+        if response.output_parsed is None:
+            raise ValueError("The model did not return a classification.")
+        return response.output_parsed
+```
+
+### Request context when you need it
+
+For case/trial logging, replace the async task's signature with the following
+and add the logging call before its existing body. Keep its decorator unchanged:
+
+<!-- snippet: task-context -->
+```python
+async def classify(ctx: mic.TaskContext[Classification], ticket: Ticket) -> Classification:
+    import logging
+
+    logging.getLogger(__name__).info("case=%s trial=%s", ctx.case_id, ctx.trial)
+```
+
+See [context types](docs/api.md#callback-signatures-and-context-types).
+
+## Use the CLI
+
+Run a specific evaluation, control repeated execution, and enforce quality
+thresholds without writing a runner.
+
+### Discover and validate
+
+```console
+# List datasets, scorers, and evaluations without loading data.
+mic list ticket_eval
+
+# Inspect three validated cases without calling the task.
+mic inspect ticket_eval:tickets --limit 3
+
+# Validate the full dataset and execution configuration without calling the task.
+mic preflight ticket_eval:classify
+```
+
+Inspection and preflight read datasets, including remote sources.
+
+### Control the run
+
+```console
+# Five trials per case, at most two concurrent tasks, and a cooperative 30-second
+# per-trial timeout.
+mic run ticket_eval:classify \
+  --trials 5 \
+  --concurrency 2 \
+  --timeout 30 \
+  --output .mic/tickets-v2
+```
+
+See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
+for safety caps and timeout behavior.
+
+### Turn scores into pass/fail requirements
+
+With both scorers from the preceding section attached:
+
+<!-- snippet: cli-gates -->
+```console
+mic run ticket_eval:classify \
+  --trials 5 \
+  --require 'accuracy>=0.9' \
+  --require 'bug_recall>=0.95'
+```
+
+Each `--require` compares a scorer's mean across numeric results, excluding `None`.
+All requirements must pass; supported comparisons are `>=`, `>`, `<=`, `<`, and
+`==`. A failed requirement exits nonzero for CI, while preserving saved evidence.
+These are aggregate thresholds, not per-case assertions or comparisons with a
+previous run. See [quality gates](docs/cli.md#quality-gates) for full semantics.
+
+### Inspect or automate the results
+
+```console
+# Render saved evidence without rerunning the task.
+mic report .mic/tickets-v2 --open
+
+# Print the final run manifest as JSON for automation.
+mic run ticket_eval:classify --json
+```
+
+For all six commands, including BigQuery cost estimation, see the
+[CLI reference](docs/cli.md), or explore the built-in help:
+
+```console
+mic --help
+mic run --help
+```
+
+## Run from Python
+
+In a separate script, import the evaluation and call `mic.run()`:
+
+<!-- snippet: programmatic-run -->
+```python
+import mic
+from ticket_eval import classify
+
+result = mic.run(
+    classify,
+    trials=5,
+    concurrency=2,
+    timeout=30,
+    require=["accuracy>=0.9"],
+)
+print(result.manifest["scores"])
+print(result.output_dir)
+raise SystemExit(result.exit_code)
+```
+
+In a notebook or async application with an active event loop, use `mic.arun()`:
+
+<!-- snippet: programmatic-arun -->
+```python
+import mic
+from ticket_eval import classify
+
+result = await mic.arun(classify, trials=5, concurrency=2, require=["accuracy>=0.9"])
+result.manifest["scores"]
+```
+
+Either runner supports sync and async tasks.
+See the [Python execution API](docs/api.md#execution-and-errors) for all options.
+
+## Notes and documentation
+
+- **Early release:** the API may change before a stable release.
+- **Sensitive evidence:** inputs, outputs, and errors are not automatically redacted.
+  Review artifacts before sharing them.
+
+[Artifacts](docs/artifacts.md) · [Optional Braintrust reporting](docs/reporting.md) ·
+[Verification and offline demo](docs/verification.md) ·
 [Contributing](CONTRIBUTING.md) · [Releasing](docs/releasing.md) · [MIT license](LICENSE)

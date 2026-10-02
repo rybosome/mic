@@ -6,10 +6,6 @@ from pydantic import BaseModel
 
 import mic
 
-##
-## Define a dataset
-##
-
 
 class Ticket(BaseModel):
     subject: str
@@ -43,19 +39,9 @@ def tickets() -> list[mic.RawCase]:
     ]
 
 
-##
-## Define scoring
-##
-
-
 @mic.scorer(name="accuracy")
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
-
-
-##
-## Define the task
-##
 
 
 @mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])

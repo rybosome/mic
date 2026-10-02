@@ -1,13 +1,14 @@
 """Keep the copy/paste quickstart executable without credentials or model traffic."""
 
 import ast
+import asyncio
 import json
 import re
 import shlex
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,14 +16,28 @@ from mic.cli import main
 
 ROOT = Path(__file__).resolve().parents[2]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-PYTHON_BLOCKS = re.findall(r"```python\n(.*?)```", README, re.DOTALL)
-JSONL = re.search(r"```jsonl\n(.*?)```", README, re.DOTALL).group(1)
+
+
+def snippet(name: str) -> str:
+    match = re.search(
+        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|console)\n(.*?)```",
+        README,
+        re.DOTALL,
+    )
+    assert match is not None, f"Missing README snippet: {name}"
+    return match.group(1)
+
+
+QUICKSTART = "\n\n".join(
+    snippet(name) for name in ("quickstart-dataset", "quickstart-scoring", "quickstart-task")
+)
+JSONL = snippet("tickets-jsonl")
 
 
 def test_readme_matches_executable_example_and_fixture() -> None:
     example = (ROOT / "examples/ticket_eval.py").read_text(encoding="utf-8")
-    assert example.split("\n\n", 1)[1] == PYTHON_BLOCKS[0], (
-        "README.md's complete Python example and examples/ticket_eval.py have drifted. "
+    assert example.split("\n\n", 1)[1] == QUICKSTART, (
+        "README.md's assembled quickstart and examples/ticket_eval.py have drifted. "
         "Update both together, keeping the example file's module docstring."
     )
     assert (ROOT / "examples/fixtures/tickets.jsonl").read_text(encoding="utf-8") == JSONL
@@ -45,25 +60,34 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = ModuleType("ticket_eval")
     module.__file__ = str(tmp_path / "ticket_eval.py")
     monkeypatch.setitem(sys.modules, "ticket_eval", module)
-    exec(compile(PYTHON_BLOCKS[0], module.__file__, "exec"), module.__dict__)
+    exec(compile(QUICKSTART, module.__file__, "exec"), module.__dict__)
     return module, constructor, client
 
 
 def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch) -> None:
     module, constructor, client = quickstart
+    task = snippet("multiple-scorers") + snippet("quickstart-task").split("\n", 1)[1]
+    exec(snippet("extended-scoring") + "\n\n" + task, module.__dict__)
     opened = MagicMock(return_value=True)
     monkeypatch.setattr("webbrowser.open", opened)
     commands = [
         line
         for block in re.findall(r"```console\n(.*?)```", README, re.DOTALL)
-        for line in block.splitlines()
+        for line in block.replace("\\\n", " ").splitlines()
         if line.startswith("mic ")
     ]
     for command in commands:
-        assert main(shlex.split(command)[1:]) == 0, command
-    assert client.responses.parse.call_count == 33  # 3 + 15 + 15; report makes no calls.
-    assert constructor.call_count == 33
-    assert constructor.return_value.__exit__.call_count == 33
+        if "--help" in command:
+            with pytest.raises(SystemExit) as result:
+                main(shlex.split(command)[1:])
+            assert result.value.code == 0
+        else:
+            assert main(shlex.split(command)[1:]) == 0, command
+    assert (
+        client.responses.parse.call_count == 36
+    )  # 3 + 15 + 15 + 3; discovery/inspection/preflight/report/help make no model calls.
+    assert constructor.call_count == 36
+    assert constructor.return_value.__exit__.call_count == 36
     constructor.assert_called_with(timeout=30, max_retries=0)
     request = client.responses.parse.call_args.kwargs
     assert request["text_format"] is module.Classification
@@ -71,13 +95,16 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     assert request["store"] is False
     assert request["model"] == "gpt-4.1-mini"
     assert "bug (broken behavior)" in request["instructions"]
-    opened.assert_called_once()
-    first = json.loads(Path(".mic/tickets-first/run.json").read_text())
-    repeated = json.loads(Path(".mic/tickets-repeat/run.json").read_text())
+    assert opened.call_count == 2
+    first = json.loads(Path(".mic/tickets/run.json").read_text())
+    repeated = json.loads(Path(".mic/tickets-v2/run.json").read_text())
     assert first["scores"]["accuracy"]["mean"] == 1
     assert first["counts"]["completed"] == 3
     assert repeated["counts"]["completed"] == 15
-    assert Path(".mic/tickets-first/report.html").is_file()
+    assert repeated["options"]["trials"] == 5
+    assert repeated["options"]["concurrency"] == 2
+    assert repeated["options"]["timeout"] == 30
+    assert Path(".mic/tickets/report.html").is_file()
 
 
 def test_discovery_and_preflight_do_not_create_model_client(quickstart) -> None:
@@ -92,12 +119,12 @@ def test_jsonl_replacement_preserves_dataset_and_scores(quickstart, tmp_path: Pa
     assert main(["run", "ticket_eval:classify", "--output", "native"]) == 0
     (tmp_path / "tickets.jsonl").write_text(JSONL, encoding="utf-8")
     # Apply the README's replacement before its evaluation decorator binds the dataset.
-    tree = ast.parse(PYTHON_BLOCKS[0])
+    tree = ast.parse(QUICKSTART)
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tickets")
-    lines = PYTHON_BLOCKS[0].splitlines(keepends=True)
+    lines = QUICKSTART.splitlines(keepends=True)
     source = (
         "".join(lines[: function.decorator_list[0].lineno - 1])
-        + PYTHON_BLOCKS[1]
+        + snippet("file-dataset")
         + "".join(lines[function.end_lineno :])
     )
     exec(compile(source, module.__file__, "exec"), module.__dict__)
@@ -158,9 +185,161 @@ def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, a
 def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
     module, constructor, _ = quickstart
     # Exercise the reader's schema, not only Pydantic construction in application code.
-    source = PYTHON_BLOCKS[0].replace(
+    source = QUICKSTART.replace(
         'expected=Classification(label="bug")', 'expected={"label": "unknown"}'
     )
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "invalid-data"]) == 2
     constructor.assert_not_called()
+
+
+def test_dataclass_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
+    from dataclasses import is_dataclass
+
+    module, constructor, _ = quickstart
+    source = (
+        "import mic\n"
+        + snippet("dataclasses")
+        + "\n@mic.dataset"
+        + snippet("quickstart-dataset").split("@mic.dataset", 1)[1]
+    )
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    record = json.loads(JSONL.splitlines()[0])
+    ticket = module.tickets.schema.input.validate(record["input"])
+    expected = module.tickets.schema.expected.validate(record["expected"])
+    assert is_dataclass(ticket) and is_dataclass(expected)
+    assert ticket.subject == record["input"]["subject"]
+    assert expected.label == "bug"
+    assert main(["inspect", "ticket_eval:tickets", "--limit", "3"]) == 0
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("name", ["bigquery-dataset", "braintrust-dataset"])
+def test_cloud_factory_examples_are_passive(quickstart, name: str) -> None:
+    from mic.providers.bigquery import BigQueryHandle
+    from mic.providers.braintrust import BraintrustHandle
+
+    module, constructor, _ = quickstart
+    exec(compile(snippet(name), module.__file__, "exec"), module.__dict__)
+    handle = module.tickets.factory()
+    if name == "bigquery-dataset":
+        assert isinstance(handle, BigQueryHandle)
+        assert handle.maximum_bytes_billed == 10_000_000
+        assert "STRUCT(subject, body) AS input" in handle.sql
+        assert "STRUCT(label) AS expected" in handle.sql
+        assert "ORDER BY id" in handle.sql
+    else:
+        assert isinstance(handle, BraintrustHandle)
+        assert handle.dataset_id == "your-dataset-id"
+        assert handle.xact_id == "your-pinned-version"
+    constructor.assert_not_called()
+
+
+@pytest.mark.parametrize("miss_bug,relaxed_accuracy", [(False, False), (True, False), (True, True)])
+def test_multiple_metrics_metadata_and_nonapplicable_scores(
+    quickstart, miss_bug: bool, relaxed_accuracy: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module, _, client = quickstart
+    task = snippet("quickstart-task")
+    task = snippet("multiple-scorers") + task.split("\n", 1)[1]
+    source = snippet("quickstart-dataset") + "\n\n" + snippet("extended-scoring") + "\n\n" + task
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    respond = client.responses.parse.side_effect
+
+    def predict(**kwargs):
+        if miss_bug and json.loads(kwargs["input"])["subject"] == "PDF upload":
+            return SimpleNamespace(output_parsed=module.Classification(label="question"))
+        return respond(**kwargs)
+
+    client.responses.parse.side_effect = predict
+    command = shlex.split(snippet("cli-gates").replace("\\\n", " "))[1:]
+    if relaxed_accuracy:
+        command[command.index("accuracy>=0.9")] = "accuracy>=0.6"
+    assert main([*command, "--output", "metrics", "--json"]) == (1 if miss_bug else 0)
+    manifest = json.loads(Path("metrics/run.json").read_text())
+    assert json.loads(capsys.readouterr().out) == manifest
+    assert [gate["passed"] for gate in manifest["gates"]] == [
+        not miss_bug or relaxed_accuracy,
+        not miss_bug,
+    ]
+    assert manifest["counts"]["completed"] == 15
+    assert manifest["counts"]["failed"] == 0
+    assert Path("metrics/report.html").is_file()
+    assert manifest["scores"]["accuracy"]["mean"] == pytest.approx(2 / 3 if miss_bug else 1)
+    recall = manifest["scores"]["bug_recall"]
+    assert recall["count"] == 5 and recall["null_count"] == 10
+    assert recall["mean"] == (0 if miss_bug else 1)
+    cases = [json.loads(line) for line in Path("metrics/cases.jsonl").read_text().splitlines()]
+    bug = next(case for case in cases if case["case_id"] == "upload")
+    assert bug["scores"][0]["metadata"] == {
+        "body_length": len("The app closes whenever I upload a PDF."),
+    }
+
+
+@pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize("missing_output", [False, True])
+def test_async_task_and_context_examples(quickstart, with_context, missing_output, caplog) -> None:
+    module, _, sync_client = quickstart
+    constructor = MagicMock()
+    sys.modules["openai"].AsyncOpenAI = constructor
+    client = constructor.return_value.__aenter__.return_value
+    client.responses.parse = AsyncMock(
+        side_effect=(
+            (lambda **kwargs: SimpleNamespace(output_parsed=None))
+            if missing_output
+            else sync_client.responses.parse.side_effect
+        )
+    )
+    source = snippet("async-task")
+    if with_context:
+        source = source.replace(
+            "async def classify(ticket: Ticket) -> Classification:\n",
+            snippet("task-context"),
+        )
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    caplog.set_level("INFO", logger="ticket_eval")
+    assert main(["run", "ticket_eval:classify", "--trials", "2", "--output", "async"]) == (
+        1 if missing_output else 0
+    )
+    assert client.responses.parse.await_count == 6
+    assert constructor.return_value.__aexit__.await_count == 6
+    constructor.assert_called_with(timeout=30, max_retries=0)
+    request = client.responses.parse.call_args.kwargs
+    assert request["text_format"] is module.Classification
+    assert request["store"] is False
+    result = json.loads(Path("async/run.json").read_text())
+    assert result["counts"]["failed"] == (6 if missing_output else 0)
+    if with_context:
+        assert {record.getMessage() for record in caplog.records} == {
+            f"case={case} trial={trial}"
+            for case in ("upload", "export", "invoice")
+            for trial in (1, 2)
+        }
+
+
+@pytest.mark.parametrize("async_runner", [False, True])
+@pytest.mark.parametrize("wrong_labels", [False, True])
+def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels) -> None:
+    module, _, client = quickstart
+    if wrong_labels:
+        client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
+            output_parsed=module.Classification(label="feature")
+        )
+    namespace = {}
+    if async_runner:
+        code = compile(
+            snippet("programmatic-arun"),
+            "readme_notebook",
+            "exec",
+            flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+        )
+        asyncio.run(eval(code, namespace))
+    else:
+        with pytest.raises(SystemExit) as outcome:
+            exec(snippet("programmatic-run"), namespace)
+        assert outcome.value.code == (1 if wrong_labels else 0)
+    result = namespace["result"]
+    assert result.exit_code == (1 if wrong_labels else 0)
+    assert result.manifest["counts"]["completed"] == 15
+    assert result.manifest["options"]["concurrency"] == 2
+    assert (result.output_dir / "report.html").is_file()
