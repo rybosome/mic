@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Never,
+    Protocol,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 
 from .errors import ConfigurationError
 from .models import (
@@ -27,6 +40,22 @@ from .schema import schema as native_schema
 
 if TYPE_CHECKING:
     from typing_extensions import TypeForm
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
+
+
+def _definition_name(fn: object, name: str | None) -> str:
+    if name is not None:
+        return name
+    inferred: object = getattr(fn, "__name__", None)
+    if not isinstance(inferred, str) or not inferred.strip():
+        raise ConfigurationError("Cannot infer definition name; provide name= explicitly")
+    return inferred
 
 
 def _schema_for[T](annotation: TypeForm[T] | Schema[T]) -> Schema[T]:
@@ -83,16 +112,86 @@ def case_schema[I, E, M](
     )
 
 
+@overload
 def dataset[I, E, M](
     *,
-    name: str,
+    name: str | None = None,
     schema: CaseSchema[I, E, M],
+    map_row: RowMapper | None = None,
+) -> Callable[[SourceFactory], Dataset[I, E, M]]: ...
+
+
+@overload
+def dataset[I, E, M](
+    *,
+    name: str | None = None,
+    input: TypeForm[I] | Schema[I],
+    expected: TypeForm[E] | Schema[E],
+    metadata: TypeForm[M] | Schema[M],
+    expected_policy: Literal["required", "optional"] = "required",
+    map_row: RowMapper | None = None,
+) -> Callable[[SourceFactory], Dataset[I, E, M]]: ...
+
+
+@overload
+def dataset[I, E](
+    *,
+    name: str | None = None,
+    input: TypeForm[I] | Schema[I],
+    expected: TypeForm[E] | Schema[E],
+    expected_policy: Literal["required", "optional"] = "required",
+    map_row: RowMapper | None = None,
+) -> Callable[[SourceFactory], Dataset[I, E, JsonObject]]: ...
+
+
+def dataset[I, E, M](
+    *,
+    name: str | None = None,
+    schema: CaseSchema[I, E, M] | _Unset = _UNSET,
+    input: TypeForm[I] | Schema[I] | _Unset = _UNSET,
+    expected: TypeForm[E] | Schema[E] | _Unset = _UNSET,
+    metadata: TypeForm[M] | Schema[M] | _Unset = _UNSET,
+    expected_policy: Literal["required", "optional"] | _Unset = _UNSET,
     map_row: RowMapper | None = None,
 ) -> Callable[[SourceFactory], Dataset[I, E, M]]:
     from ._runtime.materialization import map_envelope
 
+    if not isinstance(schema, _Unset):
+        if any(
+            not isinstance(value, _Unset) for value in (input, expected, metadata, expected_policy)
+        ):
+            raise ConfigurationError(
+                "Use schema= or input=/expected=/metadata=/expected_policy=, not both"
+            )
+        resolved = schema
+    else:
+        if isinstance(input, _Unset) or isinstance(expected, _Unset):
+            raise ConfigurationError("Dataset requires schema= or both input= and expected=")
+        policy = "required" if isinstance(expected_policy, _Unset) else expected_policy
+        if isinstance(metadata, _Unset):
+            resolved = cast(
+                CaseSchema[I, E, M],
+                case_schema(
+                    input=input,
+                    expected=expected,
+                    expected_policy=policy,
+                ),
+            )
+        else:
+            resolved = case_schema(
+                input=input,
+                expected=expected,
+                metadata=metadata,
+                expected_policy=policy,
+            )
+
     def decorate(factory: SourceFactory) -> Dataset[I, E, M]:
-        return Dataset(name, schema, factory, map_row if map_row is not None else map_envelope)
+        return Dataset(
+            _definition_name(factory, name),
+            resolved,
+            factory,
+            map_row if map_row is not None else map_envelope,
+        )
 
     return decorate
 
@@ -103,11 +202,11 @@ class _ScorerDecorator(Protocol):
 
 def scorer(
     *,
-    name: str,
+    name: str | None = None,
     requires_expected: bool = True,
 ) -> _ScorerDecorator:
     def decorate[I, O, E, M](fn: Scoring[I, O, E, M]) -> Scorer[I, O, E, M]:
-        return Scorer(name, fn, requires_expected)
+        return Scorer(_definition_name(fn, name), fn, requires_expected)
 
     return decorate
 
@@ -121,6 +220,50 @@ class _TaskDecorator[I, O, E, M](Protocol):
 
     @overload
     def __call__(self, fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]: ...
+
+
+class _InferredTaskDecorator[I, E, M](Protocol):
+    @overload
+    def __call__[O](self, fn: _InputTask[I, O]) -> Evaluation[I, O, E, M]: ...
+
+    @overload
+    def __call__[O](self, fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]: ...
+
+
+def _result_annotation(annotation: object) -> object:
+    if annotation is Any or annotation is object:
+        raise ConfigurationError("Return annotation must identify an output schema")
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin in (TaskResult, Awaitable, Coroutine):
+        if not args:
+            raise ConfigurationError("Return wrapper needs a concrete output type")
+        return _result_annotation(args[-1])
+    if origin in (Union, UnionType):
+        return Union[tuple(_result_annotation(arg) for arg in args)]
+    return annotation
+
+
+def _inferred_output(fn: object) -> object:
+    # Resolve only the return annotation, not unrelated input/context annotations.
+    # Never execute the task to learn its output contract.
+    try:
+        target = inspect.unwrap(fn) if callable(fn) else fn
+        annotation = inspect.signature(cast(Callable[..., object], target)).return_annotation
+        if annotation is inspect.Signature.empty:
+            raise ValueError("missing return annotation")
+
+        def hints() -> None:
+            pass
+
+        hints.__annotations__ = {"return": annotation}
+        namespace = getattr(target, "__globals__", {})
+        resolved = get_type_hints(hints, globalns=namespace, include_extras=True)["return"]
+        return _result_annotation(resolved)
+    except Exception as exc:
+        raise ConfigurationError(
+            "Cannot infer output schema; use a resolvable return annotation or explicit output="
+        ) from exc
 
 
 def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Task[I, O, E, M]:
@@ -161,20 +304,63 @@ def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Tas
     return sync_task
 
 
+@overload
 def eval[I, O, E, M](
     *,
-    name: str,
+    name: str | None = None,
     dataset: Dataset[I, E, M],
     output: TypeForm[O] | Schema[O],
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
-) -> _TaskDecorator[I, O, E, M]:
+) -> _TaskDecorator[I, O, E, M]: ...
+
+
+@overload
+def eval[I, E, M](
+    *,
+    name: str | None = None,
+    dataset: Dataset[I, E, M],
+    scorers: Sequence[Never],
+    trials: int = 1,
+    concurrency: int = 10,
+) -> _InferredTaskDecorator[I, E, M]: ...
+
+
+@overload
+def eval[I, O, E, M](
+    *,
+    name: str | None = None,
+    dataset: Dataset[I, E, M],
+    scorers: Sequence[Scorer[I, O, E, M]],
+    trials: int = 1,
+    concurrency: int = 10,
+) -> _TaskDecorator[I, O, E, M]: ...
+
+
+def eval[I, O, E, M](
+    *,
+    name: str | None = None,
+    dataset: Dataset[I, E, M],
+    output: TypeForm[O] | Schema[O] | _Unset = _UNSET,
+    scorers: Sequence[Scorer[I, O, E, M]],
+    trials: int = 1,
+    concurrency: int = 10,
+) -> _TaskDecorator[I, O, E, M] | _InferredTaskDecorator[I, E, M]:
     def decorate(fn: _InputTask[I, O] | Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
+        annotation = _inferred_output(fn) if isinstance(output, _Unset) else output
+        try:
+            output_schema = _schema_for(cast("TypeForm[O] | Schema[O]", annotation))
+        except Exception as exc:
+            if not isinstance(output, _Unset):
+                raise
+            raise ConfigurationError(
+                "Cannot infer output schema; provide explicit output="
+            ) from exc
         return Evaluation(
-            name,
+            _definition_name(fn, name),
             dataset,
-            _schema_for(output),
+            output_schema,
             tuple(scorers),
             _contextual_task(fn),
             trials,

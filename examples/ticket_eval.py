@@ -16,7 +16,7 @@ class Classification(BaseModel):
     label: Literal["bug", "feature", "question"]
 
 
-@mic.dataset(name="tickets", schema=mic.case_schema(input=Ticket, expected=Classification))
+@mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> list[mic.RawCase]:
     return [
         mic.RawCase(
@@ -39,12 +39,12 @@ def tickets() -> list[mic.RawCase]:
     ]
 
 
-@mic.scorer(name="accuracy")
+@mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
     return float(ctx.output.label == ctx.require_expected().label)
 
 
-@mic.eval(name="classify", dataset=tickets, output=Classification, scorers=[accuracy])
+@mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
     from openai import OpenAI
 

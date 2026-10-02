@@ -8,7 +8,10 @@ passes strict Pyright.
 
 ## Authoring
 
-- `@dataset(name=..., schema=..., map_row=...)` binds a no-argument source factory.
+- `@dataset(input=..., expected=..., metadata=..., expected_policy="required", map_row=...)`
+  binds a no-argument source factory. Metadata defaults to `JsonObject`.
+  Alternatively, pass `schema=case_schema(...)` to reuse a composed schema; do not
+  combine `schema=` with any of the four individual schema fields.
   It can return a fresh synchronous/async iterable, an awaitable of either, or a
   provider handle. The factory is invoked once per run or inspection.
 - `case_schema(input=..., expected=..., metadata=..., expected_policy=...)` accepts
@@ -18,18 +21,56 @@ passes strict Pyright.
   strict and reject `strict=False`. Use explicit mapping for normalization.
   Optional Pydantic adapters preserve constraints and aliases through strict JSON
   hydration; canonical snapshots use Python field names. See [schemas](schemas.md).
-- `@scorer(name=..., requires_expected=True)` accepts a synchronous or async
+- `@scorer(requires_expected=True)` accepts a synchronous or async
   function taking `ScoreContext[I,O,E,M]`. Each scorer defines exactly one metric,
   named by the scorer. Return a finite `float`/`int`, `None` when inapplicable, or
   `Score(value, metadata)` when the score needs JSON metadata.
-- `@eval(name=..., dataset=..., output=..., scorers=[...], trials=1, concurrency=10)`
+- `@eval(dataset=..., scorers=[...], trials=1, concurrency=10)`
   accepts a task `(input: I) -> O | TaskResult[O]` or
   `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
   `output` and `metadata` keys are not unpacked.
+- All three decorators accept optional `name=`. If omitted or `None`, it defaults
+  to the function's `__name__`, not a module-qualified name. Use `@scorer()` with
+  parentheses. Callables without a function name (such as `functools.partial`)
+  need an explicit name. Explicit names are unchanged; empty names are not replaced.
+  CLI selectors remain `module:symbol`. Scorer names must be unique within an
+  evaluation; use explicit names to disambiguate or retain a metric name after a rename.
 - Descriptors expose their stable `name`; callback storage is an implementation detail.
   Their constructors/decorators do not call provider SDKs or authenticate. Python module
   import is still ordinary code execution, not a sandbox.
+
+### Output schema inference
+
+When `output=` is omitted, `@eval` resolves the task's return annotation at
+decoration time and compiles it using the same schema backend as explicit types.
+It never calls the task or samples a returned value. The inferred schema is
+available to preflight and validates every output during execution.
+
+```python
+@mic.eval(dataset=tickets, scorers=[accuracy])
+def classify(ticket: Ticket) -> Classification:
+    ...
+```
+
+Sync and async functions use the annotated result type. `TaskResult[T]`,
+`Awaitable[T]`, and `Coroutine[..., T]` wrappers are unwrapped; supported unions
+retain their alternatives, including `None`. Input and expected types do not
+determine the output type, and scorers are not used for runtime schema inference.
+
+Explicit `output=Type` or `output=schema_adapter` remains supported and bypasses
+return-annotation inference. Use it for unannotated functions, unresolved local
+forward references, generic return types, or custom validation adapters.
+Missing/unresolvable/unsupported return annotations and inferred `Any`/`object`
+fail with a configuration error directing the author to `output=`. No fallback
+to the expected schema or a permissive schema occurs.
+
+String annotations resolve in the function's global namespace. Define referenced
+types before the decorated function; enclosing function locals are not searched.
+Annotation evaluation is ordinary trusted Python execution. Only the return
+annotation is resolved for inference; unrelated parameter annotations are not.
+Static typing still checks task/scorer/dataset compatibility, including evaluations
+with no scorers. For advanced schema capabilities, see [schemas](schemas.md).
 
 ## Callback signatures and context types
 
@@ -75,7 +116,7 @@ Context type parameters have defaults:
 Use `TaskContext[E, M]` or `ScoreContext[I, O, E, M]` for custom metadata.
 `E` is the expected type, not necessarily the output type; `M` is case metadata.
 The shorthands work on Python 3.12+ without adding core runtime dependencies.
-`@mic.scorer(name=...)` already defaults to `requires_expected=True`; opt out explicitly
+`@mic.scorer()` defaults to `requires_expected=True`; opt out explicitly
 for reference-free scorers. `require_expected()` returns the typed reference value or
 raises if missing; the context's `expected` attribute still includes `Missing` in its type.
 
