@@ -5,14 +5,14 @@ No files are written by default. Recording writes two files:
 
 | File | Format | Purpose |
 | --- | --- | --- |
-| `run.json` | [mic-run-v3](artifact-schemas/run-v3.schema.json) | Compact final summary, source outcomes, requirements, sink receipts |
+| `run.json` | [mic-run-v4](artifact-schemas/run-v4.schema.json) | Compact final summary, source outcomes, requirements, sink receipts |
 | `events.jsonl` | [mic-event-v1](artifact-schemas/event-v1.schema.json) | One independent, versioned event per line, in delivery order |
 
 `mic report DIR` explicitly generates a standalone HTML view. It is not part of
 run finalization. There is no dataset snapshot, implicit case collection, backward
 reader, or migration. These alpha formats are forward-only.
 
-[Shared definitions](artifact-schemas/common-v3.schema.json) describe statistics,
+[Shared definitions](artifact-schemas/common-v4.schema.json) describe statistics,
 trials, sources, failures, and receipts. Schemas use Draft 2020-12; resolve their
 references from the supplied files with date-time checking enabled. Tests validate
 them offline. Runtime stays dependency-free; the report reader performs bounded JSON checks
@@ -62,7 +62,9 @@ All events include `schema_version="mic-event-v1"`, `type`, and `source_id`.
 - `source_finished`: source summary, emitted after iterator cleanup.
 
 Source indices count raw record occurrences, including rejections. records_seen
-includes a consumed over-cap probe, which need not be accepted or rejected. Case IDs use
+never includes an extra selection probe. Effective read configuration records
+`row_count` and `timeout_seconds`, each nullable; selected prefixes have
+`exhausted=false` unless natural exhaustion was observed before the count. Case IDs use
 run/source/row occurrence; labels need not be unique. Trial numbers start at one.
 Accepted records can exist without admitted trials if cancellation or an execution
 cap intervenes. SourceFinished can precede completion of its admitted trials.

@@ -15,9 +15,9 @@ from .test_finalization import fail_replacement
 
 
 def test_schema_documents_are_valid_and_offline():
-    assert set(validators()) == {"common-v3", "run-v3", "event-v1"}
+    assert set(validators()) == {"common-v4", "run-v4", "event-v1"}
     with pytest.raises(Unresolvable):
-        validators()["run-v3"].evolve(schema={"$ref": "https://invalid.example/absent"}).validate(
+        validators()["run-v4"].evolve(schema={"$ref": "https://invalid.example/absent"}).validate(
             {}
         )
 
@@ -73,7 +73,7 @@ def test_failure_contracts(tmp_path, phase):
     if phase == "gate":
         kwargs["require"] = ['tasks["runtime"].scores["exact"].mean > 1']
     if phase == "dataset":
-        spec = replace(spec, dataset=replace(spec.dataset, factory=broken))
+        spec = replace(spec, dataset=replace(spec.dataset, factory=lambda: broken()))
     if phase == "empty":
         spec = evaluation([])
     result = mic.run(spec, output=tmp_path, **kwargs)
@@ -84,7 +84,7 @@ def test_failure_contracts(tmp_path, phase):
 def test_persistence_failure_preserves_valid_running_marker(tmp_path, monkeypatch):
     fail_replacement(monkeypatch, {"run.json"})
     result = mic.run(evaluation([row()]), output=tmp_path)
-    assert_artifact("run-v3", result.to_json())
+    assert_artifact("run-v4", result.to_json())
     saved, _ = assert_directory(tmp_path)
     assert saved["status"] == "running"
 
@@ -112,17 +112,17 @@ async def test_journal_completion_order_is_not_snapshot_order(tmp_path):
 def valid_records(tmp_path):
     mic.run(evaluation([row()]), output=tmp_path)
     saved, events = assert_directory(tmp_path)
-    return {"run-v3": saved, "event-v1": next(e for e in events if e["type"] == "trial_finished")}
+    return {"run-v4": saved, "event-v1": next(e for e in events if e["type"] == "trial_finished")}
 
 
 @pytest.mark.parametrize(
     "name,path,value",
     [
-        ("run-v3", ("schema_version",), "mic-run-v999"),
-        ("run-v3", ("status",), "unknown"),
-        ("run-v3", ("exit_code",), 130),
-        ("run-v3", ("summary", "trials", "planned"), -1),
-        ("run-v3", ("info", "started_at"), "not-a-date"),
+        ("run-v4", ("schema_version",), "mic-run-v999"),
+        ("run-v4", ("status",), "unknown"),
+        ("run-v4", ("exit_code",), 130),
+        ("run-v4", ("summary", "trials", "planned"), -1),
+        ("run-v4", ("info", "started_at"), "not-a-date"),
         ("event-v1", ("result", "scores", 0, "value"), True),
         ("event-v1", ("trial",), 0),
         ("event-v1", ("result", "latency", "task_ms"), -1),
@@ -142,7 +142,7 @@ def test_invalid_fields(valid_records, name, path, value):
 @pytest.mark.parametrize(
     "name,path",
     [
-        ("run-v3", ("summary",)),
+        ("run-v4", ("summary",)),
         ("event-v1", ("result", "input")),
         ("event-v1", ("result", "output")),
     ],
@@ -161,3 +161,18 @@ def test_nonfinite_extensions(valid_records):
     valid_records["event-v1"]["result"]["input"] = {"value": float("nan")}
     with pytest.raises(ValueError):
         assert_artifact("event-v1", valid_records["event-v1"])
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"max_rows": 10, "timeout_seconds": 60},
+        {"row_count": 0, "timeout_seconds": None},
+        {"row_count": True, "timeout_seconds": None},
+        {"row_count": 1, "timeout_seconds": -1},
+    ],
+)
+def test_v4_rejects_invalid_read_configuration(limits):
+    manifest = mic.run(evaluation([row()])).to_json()
+    manifest["info"]["tasks"]["runtime"]["limits"] = limits
+    assert list(validators()["run-v4"].iter_errors(manifest))

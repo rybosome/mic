@@ -17,11 +17,11 @@ from mic.sinks.braintrust import BraintrustSink
 
 
 def _limits(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--max-rows", type=int, default=10_000)
+    parser.add_argument("--limit", type=int, help="Select this many raw source records")
     parser.add_argument(
         "--dataset-timeout",
         type=float,
-        default=60.0,
+        default=None,
         help="Cumulative source-read time budget; excludes task/sink backpressure",
     )
 
@@ -43,7 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--json", action="store_true")
     inspect = commands.add_parser("inspect", help="Validate and inspect a selected dataset prefix")
     inspect.add_argument("selector", help="Exact module:symbol for a dataset or evaluation")
-    inspect.add_argument("--limit", type=int, help="Explicitly select only this many source rows")
     _limits(inspect)
     preflight = commands.add_parser(
         "preflight", help="Validate data and configuration; execute no tasks"
@@ -75,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _read_limits(args: argparse.Namespace) -> mic.ReadLimits:
     return mic.ReadLimits(
-        max_rows=args.max_rows,
+        row_count=args.limit,
         timeout_seconds=args.dataset_timeout,
     )
 
@@ -123,7 +122,7 @@ def _execute(args: argparse.Namespace) -> int:
         dataset = definition.dataset if isinstance(definition, mic.Evaluation) else definition
         if not isinstance(dataset, mic.Dataset):
             raise ConfigurationError(f"{args.command} requires a dataset or evaluation definition")
-        _print_json(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
+        _print_json(mic.inspect_dataset(dataset, limits=_read_limits(args)))
         return 0
     if args.command == "preflight":
         if not isinstance(definition, mic.Evaluation):

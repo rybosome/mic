@@ -84,3 +84,19 @@ mic.dataset(input=str)  # expect-error
 mic.dataset(  # expect-error
     schema=mic.case_schema(input=str, expected=str), input=str, expected=str
 )
+
+
+@mic.dataset(input=str, expected=bool)
+def contextual_rows(ctx: mic.ReadContext) -> list[mic.RawCase]:
+    ctx.set_provenance(provider="example")
+    return [mic.RawCase(input="x", expected=True)]
+
+
+@mic.dataset(input=str, expected=bool)
+async def async_contextual_rows(ctx: mic.ReadContext) -> list[mic.RawCase]:
+    ctx.set_provenance(provider="example")
+    return []
+
+
+assert_type(contextual_rows, mic.Dataset[str, bool, mic.JsonObject])
+assert_type(async_contextual_rows, mic.Dataset[str, bool, mic.JsonObject])

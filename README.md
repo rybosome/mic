@@ -252,38 +252,44 @@ uv add pyyaml
 <!-- snippet: yaml-dataset -->
 ```python
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
 import mic
 
 
-@dataclass(frozen=True)
-class YamlDocuments(mic.DatasetSource):
-    path: Path
-
-    def read(self, ctx: mic.ReadContext) -> Iterator[object]:
-        import yaml
-
-        ctx.set_provenance(provider="yaml", path=str(self.path))
-        # Open only when reading, and close on exhaustion or early exit.
-        with self.path.open("rb") as stream:
-            try:
-                yield from yaml.safe_load_all(stream)
-            except yaml.YAMLError:
-                # Parser errors can contain private source excerpts.
-                raise mic.DatasetError("Invalid YAML document stream") from None
-
-
 @mic.dataset(input=Ticket, expected=Classification)
-def tickets() -> YamlDocuments:
-    return YamlDocuments(Path(__file__).with_name("tickets.yaml"))
+def tickets(ctx: mic.ReadContext) -> Iterator[object]:
+    import yaml
+
+    path = Path(__file__).with_name("tickets.yaml")
+    ctx.set_provenance(provider="yaml", path=str(path))
+    # Open only when reading, and close on exhaustion or early exit.
+    with path.open("rb") as stream:
+        try:
+            yield from yaml.safe_load_all(stream)
+        except yaml.YAMLError:
+            # Parser errors can contain private source excerpts.
+            raise mic.DatasetError("Invalid YAML document stream") from None
 ```
 
-`read(ctx)` yields raw records; Mic handles schema validation and execution.
-Built-in providers use the [same contract](docs/providers.md#custom-sources),
-without registration. For additional YAML safeguards (aliases, duplicate keys,
-and parser depth/node limits), see [`yaml_source.py`](examples/yaml_source.py).
+Factory context is optional. It exposes immutable read configuration, raw records
+seen, remaining rows and active read time, and source provenance. Mic handles
+validation and closes the iterator on completion or early exit. Reusable source
+classes implement the [same contract](docs/providers.md#custom-sources).
+For a class-based YAML reader with alias, duplicate-key, and nesting safeguards,
+see [`yaml_source.py`](examples/yaml_source.py).
+
+Select raw records and configure a read budget together:
+
+```python
+mic.run(evaluation, limits=mic.ReadLimits(row_count=500, timeout_seconds=30))
+```
+
+Both settings default to `None`. Row selection stops successfully without probing
+for another record; rejected or skipped records count toward the selection.
+Time spent waiting for tasks or sinks does not consume the read budget. Providers
+can use `ctx.remaining_seconds` for SDK request timeouts; cancellation cannot
+forcibly stop synchronous work already running in a thread.
 
 ## Scoring: multiple metrics and supporting evidence
 
@@ -400,7 +406,7 @@ mic run ticket_eval:classify \
 ```
 
 See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
-for safety caps and timeout behavior.
+for row selection, execution caps, and timeout behavior.
 
 ### Turn scores into pass/fail requirements
 

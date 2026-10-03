@@ -45,7 +45,7 @@ def read_jsonl(path):
 def assert_directory(path):
     manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
     events = read_jsonl(path / "events.jsonl")
-    assert_artifact("run-v3", manifest)
+    assert_artifact("run-v4", manifest)
     for event in events:
         assert_artifact("event-v1", event)
     return manifest, events

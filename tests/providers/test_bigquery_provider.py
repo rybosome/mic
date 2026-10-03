@@ -121,12 +121,11 @@ async def test_raw_column_types_preserved_for_mapper_and_budget_failure_cancels(
     assert rows[0]["cost"] is native
     client = Client(job=Job(rows=[{"input": "x"}, {"input": "y"}]))
     loader = partial(open_bigquery, client_factory=lambda _: client, config_factory=config)
-    with pytest.raises(DatasetError, match="max_rows=1"):
-        async with loader(handle(), limits=ReadLimits(max_rows=1)) as read:
-            _ = [row async for row in read.rows()]
+    async with loader(handle(), limits=ReadLimits(row_count=1)) as read:
+        assert len([row async for row in read.rows()]) == 1
     assert client.job.cancelled
     assert client.closed
-    assert client.job.result_options["page_size"] == 2
+    assert client.job.result_options["page_size"] == 1
 
 
 @pytest.mark.asyncio

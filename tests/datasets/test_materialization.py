@@ -225,8 +225,9 @@ async def test_empty_and_infinite_sources():
         while True:
             yield {"input": "x", "expected": "x"}
 
-    with pytest.raises(DatasetError, match="max_rows=3"):
-        await collect_dataset(definition(forever()), limits=ReadLimits(max_rows=3))
+    selected = await collect_dataset(definition(forever()), limits=ReadLimits(row_count=3))
+    assert len(selected.rows) == 3
+    assert not selected.summary["exhausted"]
 
 
 @pytest.mark.asyncio

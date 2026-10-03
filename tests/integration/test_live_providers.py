@@ -45,7 +45,7 @@ async def test_live_bigquery_bounded_ordered_fixture(record_property):
     )
     async with partial(
         open_bigquery,
-    )(source, limits=ReadLimits(max_rows=100)) as read:
+    )(source, limits=ReadLimits(row_count=100)) as read:
         rows = [row async for row in read.rows()]
         assert len(rows) >= 2, "fixture must have >=2 rows to exercise pages"
         assert read.provenance["job_id"]
@@ -68,7 +68,7 @@ async def test_live_braintrust_pinned_multi_page_repeat(record_property):
     for _ in range(2):
         async with partial(
             open_braintrust,
-        )(source, limits=ReadLimits(max_rows=100)) as read:
+        )(source, limits=ReadLimits(row_count=100)) as read:
             rows = [row async for row in read.rows()]
             assert len(rows) >= 2, "fixture must have >=2 records to exercise pagination"
             assert read.provenance["pages"] >= 3

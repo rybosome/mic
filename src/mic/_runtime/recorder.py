@@ -62,7 +62,7 @@ class JsonlSink:
                 (
                     dumps(
                         {
-                            "schema_version": "mic-run-v3",
+                            "schema_version": "mic-run-v4",
                             "run_id": run.run_id,
                             "status": "running",
                         }

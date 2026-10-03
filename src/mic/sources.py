@@ -1,5 +1,6 @@
 """Public source API shared by built-in providers and external extensions."""
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -29,9 +30,33 @@ class ReadContext:
     """Per-read limits and bounded provenance, independent of task/output types."""
 
     def __init__(self, limits: ReadLimits) -> None:
-        self.limits = limits
-        self.rows_seen = 0
+        self._limits = limits
+        self._rows_seen = 0
+        self._remaining = limits.timeout_seconds
+        self._started: float | None = None
         self._provenance: JsonObject = {}
+
+    @property
+    def limits(self) -> ReadLimits:
+        return self._limits
+
+    @property
+    def rows_seen(self) -> int:
+        """Raw records consumed before mapping, including rejected records."""
+        return self._rows_seen
+
+    @property
+    def remaining_rows(self) -> int | None:
+        limit = self.limits.row_count
+        return None if limit is None else max(0, limit - self.rows_seen)
+
+    @property
+    def remaining_seconds(self) -> float | None:
+        """Active read budget; downstream backpressure does not consume it."""
+        if self._remaining is None:
+            return None
+        elapsed = 0.0 if self._started is None else time.perf_counter() - self._started
+        return max(0.0, self._remaining - elapsed)
 
     @property
     def provenance(self) -> JsonObject:

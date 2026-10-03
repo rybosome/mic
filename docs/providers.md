@@ -26,15 +26,17 @@ for what is embedded in reports and sent during optional export.
 
 ## Shared limits and identity
 
-`ReadLimits` defaults to `max_rows=10_000` and `timeout_seconds=60`.
-Exceeding a safety cap fails
-source admission; it never selects an implicit prefix. Already-admitted work finishes. `mic
-inspect ... --limit N` and `inspect_dataset(..., limit=N)` deliberately select a
-prefix (default: 20 records). There is no total dataset or per-record byte limit.
-The pipeline bounds the number of in-flight records, not their size: each record
-must fit in memory, and parsers/SDKs may allocate additional buffers. Providers
-may impose their own input-size policies when appropriate.
-`inspect_dataset` is blocking; async hosts use `await ainspect_dataset(...)`.
+`ReadLimits(row_count=None, timeout_seconds=None)` has no default row selection or
+read timeout. A configured row count selects that many raw records, including
+rejections. Selection succeeds without requesting an extra record; it does not
+claim the source was exhausted. Inspection resolves an omitted row count to 20.
+Use `inspect_dataset(..., limits=ReadLimits(row_count=N))` or `mic inspect --limit N`.
+
+The optional time budget includes active factory, reading, and mapping work and
+excludes task/sink backpressure. There is no total dataset or per-record byte
+limit: each record and parser/SDK buffers must fit in memory. Providers may impose
+their own input-size policies. Inspection is blocking; async hosts use
+`await ainspect_dataset(...)`.
 
 Rows normally contain `input`, optional `expected`, optional object-shaped
 `metadata`, and optional string `id`. Missing `expected` is distinct from an
@@ -183,8 +185,7 @@ provenance and is passed explicitly without a fallback to unrelated `.netrc`
 credentials.
 
 The pinned SDK's high-level dataset fetcher buffers all pages, and its legacy
-long-lived HTTP adapter can eagerly read entire response bodies. To retain read
-caps, the adapter uses the ordinary session owned by `BraintrustClient` with
+long-lived HTTP adapter can eagerly read entire response bodies. To stream response data, the adapter uses the ordinary session owned by `BraintrustClient` with
 `stream=True`, redirects disabled, and an explicit request timeout. Blocking
 request/read operations run in worker threads. Cancellation joins the in-flight
 read before closing its response and client. This low-level SDK bridge is covered
@@ -196,10 +197,11 @@ top-level `version`. The reader streams response bytes and reads cursors from
 `x-bt-cursor` or `x-amz-meta-bt_cursor`. The documented cursor flow ends at an
 empty page without a cursor. A nonempty page missing its cursor, an immediately repeated
 cursor, an empty page with a cursor, or a response exceeding its requested page
-limit fails explicitly. The adapter probes for an extra row when the configured
-row cap is reached, distinguishing a complete dataset from silent truncation.
-Cursor tracking uses constant space; longer cursor cycles are ultimately bounded
-by the row/deadline caps rather than retaining every historical cursor.
+limit fails explicitly while reading the selected records. The adapter sizes
+pages to the remaining selection and stops without an extra request once that
+selection is consumed. Cursor tracking uses constant space. Longer cursor cycles
+are bounded only when a row selection or read timeout is configured; the adapter
+does not retain every historical cursor.
 
 Malformed JSONL records, missing inputs, and missing physical IDs yield a
 recoverable record error at the known line boundary. Run policy decides abort or
@@ -274,7 +276,8 @@ thread to stop. The handle's timeout is therefore not a hard wall-clock cutoff.
 
 ## Custom sources
 
-Return a subclass of `mic.DatasetSource` from the dataset factory. Its
+An inline factory can optionally accept a `mic.ReadContext` and yield records.
+For reusable configuration, return a subclass of `mic.DatasetSource`. Its
 `read(ctx)` returns a synchronous or asynchronous iterator of raw records. The
 same interface powers every built-in source; sources do not register loaders or
 import Mic runtime internals.
@@ -308,7 +311,14 @@ can recover at a record boundary may yield `mic.RecordError` with a safe message
 The consumer aborts by default; `on_invalid="skip"` skips it. Fatal iterator
 exceptions and limits always fail.
 
-`ReadContext.limits` exposes the read caps. `set_provenance(**values)` validates
+`ReadContext.limits` exposes immutable `row_count` and `timeout_seconds`.
+`rows_seen` counts raw records before validation; `remaining_rows` gives the
+remaining selection. `remaining_seconds` decreases only during active read work.
+These properties are read-only; remaining values are `None` when unlimited.
+Providers may use them to size pages and bound each SDK request timeout.
+Built-in BigQuery and Braintrust requests use the smaller of their configured
+timeout and the remaining budget. BigQuery page sizing does not limit scan cost,
+and Mic does not rewrite arbitrary SQL to add LIMIT. `set_provenance(**values)` validates
 and copies finite JSON; cumulative provenance is limited to 64 KiB. The context
 counts raw rows centrally, independently of provider implementation. Providers
 open files and clients using ordinary Python APIs and own their cleanup; no

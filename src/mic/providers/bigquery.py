@@ -62,7 +62,7 @@ class BigQueryHandle(DatasetSource):
                 self.sql,
                 job_config=config(self, True),
                 location=self.location,
-                timeout=self.timeout,
+                timeout=_read_timeout(ctx, self.timeout),
             )
             _check_dry_run(self, dry)
             ctx.set_provenance(**_provenance(self, dry))
@@ -70,11 +70,14 @@ class BigQueryHandle(DatasetSource):
                 self.sql,
                 job_config=config(self, False),
                 location=self.location,
-                timeout=self.timeout,
+                timeout=_read_timeout(ctx, self.timeout),
             )
             ctx.set_provenance(job_id=job.job_id)
             rows = job.result(
-                page_size=min(self.page_size, ctx.limits.max_rows + 1), timeout=self.timeout
+                page_size=min(self.page_size, ctx.remaining_rows)
+                if ctx.remaining_rows is not None
+                else self.page_size,
+                timeout=_read_timeout(ctx, self.timeout),
             )
             for row in rows:
                 if isinstance(row, Mapping):
@@ -247,3 +250,10 @@ def _check_dry_run(handle: BigQueryHandle, job: QueryJob) -> None:
             f"BigQuery dry run estimates {estimated} bytes, exceeding "
             f"maximum_bytes_billed={handle.maximum_bytes_billed}"
         )
+
+
+def _read_timeout(ctx: ReadContext, configured: float) -> float:
+    remaining = ctx.remaining_seconds
+    if remaining is not None and remaining <= 0:
+        raise TimeoutError
+    return configured if remaining is None else min(configured, remaining)
