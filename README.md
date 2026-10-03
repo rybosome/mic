@@ -266,8 +266,8 @@ class YamlDocuments(mic.DatasetSource):
         import yaml
 
         ctx.set_provenance(provider="yaml", path=str(self.path))
-        # Open only when reading; enforce Mic's byte budget and close on exit.
-        with ctx.open_binary(self.path) as stream:
+        # Open only when reading, and close on exhaustion or early exit.
+        with self.path.open("rb") as stream:
             try:
                 yield from yaml.safe_load_all(stream)
             except yaml.YAMLError:

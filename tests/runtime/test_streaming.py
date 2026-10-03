@@ -55,6 +55,18 @@ def test_no_output_means_no_files_and_no_case_collection(tmp_path, monkeypatch) 
     assert result.summary.trials.completed == 1
 
 
+def test_dataset_can_exceed_former_record_and_total_byte_caps() -> None:
+    # Reuse the payload, but stream >64 MiB of logical input through real validation.
+    payload = "x" * (1024 * 1024 + 1)
+    records = ({"input": payload, "expected": len(payload)} for _ in range(65))
+    result = mic.run(evaluation(records, task=lambda value: len(value), output=int))
+    assert result.exit_code == 0
+    assert result.summary.trials.completed == 65
+    assert result.summary.tasks["runtime"].scores["exact"].mean == 1
+    assert next(iter(result.sources.values())).exhausted
+    assert result.output_dir is None
+
+
 async def test_tasks_and_scoring_start_before_source_exhaustion() -> None:
     scored = asyncio.Event()
 

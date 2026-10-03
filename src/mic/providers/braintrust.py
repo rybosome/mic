@@ -155,8 +155,7 @@ class _BraintrustRead:
         )
 
     def _record(self, data: bytes, page: int) -> RawCase | RecordError:
-        # Limits remain fatal; malformed records with a known boundary may be skipped.
-        self.ctx.check_record_bytes(len(data))
+        # Malformed records with a known boundary may be skipped.
         try:
             return self._row(data, page)
         except DatasetError:
@@ -165,6 +164,7 @@ class _BraintrustRead:
     async def rows(self) -> AsyncGenerator[object]:
         cursor: str | None = None
         page = 0
+        raw_bytes = 0
         try:
             while True:
                 page += 1
@@ -192,7 +192,7 @@ class _BraintrustRead:
                         raise DatasetError(f"Braintrust repeated pagination cursor on page {page}")
                     buffer = bytearray()
                     async for chunk in response.aiter_bytes(chunk_size=8192):
-                        self.ctx.account_bytes(len(chunk))
+                        raw_bytes += len(chunk)
                         buffer.extend(chunk)
                         while True:
                             end = buffer.find(b"\n")
@@ -208,17 +208,12 @@ class _BraintrustRead:
                                     "Braintrust server exceeded requested page limit"
                                 )
                             yield self._record(data, page)
-                        if len(buffer) > self.ctx.limits.max_record_bytes:
-                            raise DatasetError(
-                                f"Braintrust page {page}: "
-                                f"max_record_bytes={self.ctx.limits.max_record_bytes} exceeded"
-                            )
                     if buffer.strip():
                         rows_in_page += 1
                         if rows_in_page > page_limit:
                             raise DatasetError("Braintrust server exceeded requested page limit")
                         yield self._record(bytes(buffer), page)
-                self.ctx.set_provenance(pages=page, raw_bytes=self.ctx.raw_bytes)
+                self.ctx.set_provenance(pages=page, raw_bytes=raw_bytes)
                 if rows_in_page == 0:
                     if next_cursor:
                         raise DatasetError(

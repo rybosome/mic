@@ -123,8 +123,8 @@ async def test_malformed_source_contract_and_row_caps_are_central() -> None:
             _ = [row async for row in read.rows()]
 
 
-def test_context_isolates_provenance_and_bounds_raw_bytes(tmp_path) -> None:
-    ctx = mic.ReadContext(mic.ReadLimits(max_bytes=4))
+def test_context_isolates_and_bounds_provenance() -> None:
+    ctx = mic.ReadContext(mic.ReadLimits())
     nested = {"values": [1]}
     ctx.set_provenance(nested=nested)
     nested["values"].append(2)
@@ -133,20 +133,6 @@ def test_context_isolates_provenance_and_bounds_raw_bytes(tmp_path) -> None:
     assert ctx.provenance == {"nested": {"values": [1]}}
     with pytest.raises(mic.DatasetError, match="65536"):
         ctx.set_provenance(oversized="x" * 65536)
-    for value in (-1, True):
-        with pytest.raises(ValueError):
-            ctx.account_bytes(value)
-        with pytest.raises(ValueError):
-            ctx.check_record_bytes(value)
-    path = tmp_path / "input"
-    path.write_bytes(b"abcdef")
-    with ctx.open_binary(path) as stream:
-        assert stream.readable()
-        assert stream.read(0) == b""
-        assert ctx.provenance["read_complete"] is False
-        assert stream.read1(2) == b"ab"
-        with pytest.raises(mic.DatasetError, match="max_bytes=4"):
-            stream.read()
 
 
 async def test_yaml_source_hydrates_dataclasses_without_registration(tmp_path) -> None:
@@ -168,7 +154,8 @@ async def test_yaml_source_hydrates_dataclasses_without_registration(tmp_path) -
     result = await mic.ainspect_dataset(tickets)
     assert result["dataset"]["records_accepted"] == 2
     assert result["rows"][0]["input"] == {"body": "Cannot sign in"}
-    assert result["dataset"]["provenance"]["read_complete"] is True
+    assert result["dataset"]["exhausted"] is True
+    assert result["dataset"]["provenance"] == {"provider": "yaml", "path": str(path)}
 
 
 @pytest.mark.parametrize(

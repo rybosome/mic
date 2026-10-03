@@ -194,9 +194,10 @@ from running. Completed events follow completion order, with no reorder buffer.
 remain fatal. An empty/all-rejected evaluation fails. Source failure does not
 cancel previously admitted trials. Side effects already performed are not undone.
 
-`ReadLimits` defaults: 10,000 raw records, 64 MiB normalized bytes, 1 MiB per
-normalized record, and 60 seconds cumulative active reading/mapping time.
-Providers also account raw bytes where available. Time spent waiting for task or
+`ReadLimits` defaults: 10,000 raw records and 60 seconds cumulative active
+reading/mapping time. There is no dataset or per-record byte cap; bounded queues
+limit the number of in-flight records, not their memory size.
+Time spent waiting for task or
 sink capacity does not consume the source budget. Caps fail visibly, never
 silently truncate. `max_executions` caps admitted trials, not an estimated source size.
 

@@ -212,7 +212,7 @@ async def test_custom_mapper_preserves_absent_null_and_provenance():
 
 
 @pytest.mark.asyncio
-async def test_empty_infinite_and_byte_limited_sources():
+async def test_empty_and_infinite_sources():
     empty = await collect_dataset(definition([]))
     assert empty.rows == []
     assert empty.summary["records_accepted"] == 0
@@ -227,15 +227,6 @@ async def test_empty_infinite_and_byte_limited_sources():
 
     with pytest.raises(DatasetError, match="max_rows=3"):
         await collect_dataset(definition(forever()), limits=ReadLimits(max_rows=3))
-    with pytest.raises(DatasetError, match="max_record_bytes=10"):
-        await collect_dataset(
-            definition([{"input": "x" * 100, "expected": "x"}]),
-            limits=ReadLimits(max_record_bytes=10),
-        )
-    with pytest.raises(DatasetError, match="max_bytes=20"):
-        await collect_dataset(
-            definition([{"input": "x" * 100, "expected": "x"}]), limits=ReadLimits(max_bytes=20)
-        )
 
 
 @pytest.mark.asyncio

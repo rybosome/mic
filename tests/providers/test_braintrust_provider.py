@@ -133,32 +133,34 @@ async def test_row_and_server_page_caps():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "limits,match",
-    [
-        (ReadLimits(max_bytes=20), "max_bytes=20"),
-        (ReadLimits(max_record_bytes=20), "max_record_bytes=20"),
-    ],
-)
-async def test_byte_caps_before_entire_response_buffering(limits, match):
+async def test_large_record_streams_across_chunks_and_closes():
+    value = "x" * (1024 * 1024 + 1)
+    encoded = json.dumps({"id": "large", "input": value}).encode()
+
     class StreamingBody(httpx.AsyncByteStream):
         chunks = 0
         closed = False
 
         async def __aiter__(self):
-            for _ in range(1000):
+            for start in range(0, len(encoded), 4096):
                 self.chunks += 1
-                yield b"x" * 1024
+                yield encoded[start : start + 4096]
 
         async def aclose(self):
             self.closed = True
 
     body = StreamingBody()
-    fixture = Fixture([httpx.Response(200, stream=body)])
-    with pytest.raises(DatasetError, match=match):
-        await collect(fixture, limits=limits)
-    assert body.chunks < 1000
+    fixture = Fixture(
+        [
+            httpx.Response(200, stream=body, headers={"x-bt-cursor": "next"}),
+            page([]),
+        ]
+    )
+    rows, provenance = await collect(fixture)
+    assert len(rows) == 1 and rows[0].input == value
+    assert body.chunks > 1
     assert body.closed
+    assert provenance["raw_bytes"] == len(encoded)
 
 
 @pytest.mark.asyncio

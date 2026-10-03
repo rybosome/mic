@@ -87,17 +87,12 @@ class BigQueryHandle(DatasetSource):
                         continue
                     value = dict(cast(Iterable[tuple[str, object]], items()))
                 # Preserve native Decimal/datetime/bytes for the user's mapper.
-                # This bounds a decoded representation, not HTTP wire bytes.
-                size = len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8"))
-                ctx.account_bytes(size)
-                ctx.check_record_bytes(size)
                 yield value
             exhausted = True
             ctx.set_provenance(
                 total_bytes_processed=job.total_bytes_processed,
                 total_bytes_billed=job.total_bytes_billed,
                 cache_hit=job.cache_hit,
-                raw_bytes=ctx.raw_bytes,
             )
         except (DatasetError, ConfigurationError):
             raise

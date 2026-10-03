@@ -136,16 +136,21 @@ async def test_sdk_http_errors_close_without_buffering_bodies(
 
 
 @pytest.mark.asyncio
-async def test_sdk_response_byte_cap_stops_streaming_and_closes(requests_sdk, monkeypatch):
-    value = response(requests_sdk, b"x" * 1_000_000)
-    _, closed = capture_session(monkeypatch, requests_sdk, [value])
-    with pytest.raises(DatasetError, match="max_bytes=20"):
-        async with partial(open_braintrust, api_key="fixture")(
-            BraintrustHandle("dataset", "pinned"), limits=ReadLimits(max_bytes=20)
-        ) as read:
-            _ = [row async for row in read.rows()]
-    assert value.raw.chunks == 1
-    assert value.raw.closed and len(closed) == 1
+async def test_sdk_large_record_streams_and_closes(requests_sdk, monkeypatch):
+    text = "x" * (1024 * 1024 + 1)
+    value = response(
+        requests_sdk, json.dumps({"id": "large", "input": text}).encode(), cursor="next"
+    )
+    terminal = response(requests_sdk)
+    _, closed = capture_session(monkeypatch, requests_sdk, [value, terminal])
+    async with partial(open_braintrust, api_key="fixture")(
+        BraintrustHandle("dataset", "pinned"), limits=ReadLimits()
+    ) as read:
+        rows = [row async for row in read.rows()]
+    assert len(rows) == 1 and rows[0].input == text
+    assert value.raw.chunks > 1
+    assert all(item.raw.closed or item.raw.released for item in (value, terminal))
+    assert len(closed) == 1
 
 
 @pytest.mark.asyncio

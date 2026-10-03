@@ -130,18 +130,13 @@ async def test_raw_column_types_preserved_for_mapper_and_budget_failure_cancels(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "limits,match",
-    [
-        (ReadLimits(max_bytes=5), "max_bytes=5"),
-        (ReadLimits(max_record_bytes=5), "max_record_bytes=5"),
-    ],
-)
-async def test_bigquery_byte_caps(limits, match):
-    loader = partial(open_bigquery, client=Client(), config_factory=config)
-    with pytest.raises(DatasetError, match=match):
-        async with loader(handle(), limits=limits) as read:
-            _ = [row async for row in read.rows()]
+async def test_bigquery_accepts_records_larger_than_one_mib():
+    value = "x" * (1024 * 1024 + 1)
+    client = Client(job=Job(rows=[{"input": value}]))
+    loader = partial(open_bigquery, client=client, config_factory=config)
+    async with loader(handle(), limits=ReadLimits()) as read:
+        rows = [row async for row in read.rows()]
+    assert rows == [{"input": value}]
 
 
 @pytest.mark.asyncio
