@@ -237,21 +237,42 @@ def tickets() -> BraintrustHandle:
 Factories describe sources; reading a cloud dataset contacts that service.
 See [provider setup and limits](docs/providers.md).
 
-### Custom streaming sources
+### Custom sources
 
 A dataset factory can return a generator, async iterator, or a `mic.DatasetSource`.
 Mic reads and validates records as capacity becomes available; it does not first
 save a full snapshot.
 
-For YAML, copy [`yaml_source.py`](examples/yaml_source.py) beside your evaluation
-and install `pyyaml`. Its source reads one YAML document per case, separated by
-`---`, and owns the file until reading ends.
+Here is a simplified YAML source: one document per case, separated by `---`.
+
+```console
+uv add pyyaml
+```
 
 <!-- snippet: yaml-dataset -->
 ```python
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
-from yaml_source import YamlDocuments
+import mic
+
+
+@dataclass(frozen=True)
+class YamlDocuments(mic.DatasetSource):
+    path: Path
+
+    def read(self, ctx: mic.ReadContext) -> Iterator[object]:
+        import yaml
+
+        ctx.set_provenance(provider="yaml", path=str(self.path))
+        # Open only when reading; enforce Mic's byte budget and close on exit.
+        with ctx.open_binary(self.path) as stream:
+            try:
+                yield from yaml.safe_load_all(stream)
+            except yaml.YAMLError:
+                # Parser errors can contain private source excerpts.
+                raise mic.DatasetError("Invalid YAML document stream") from None
 
 
 @mic.dataset(input=Ticket, expected=Classification)
@@ -259,8 +280,10 @@ def tickets() -> YamlDocuments:
     return YamlDocuments(Path(__file__).with_name("tickets.yaml"))
 ```
 
-The [source contract](docs/providers.md#custom-sources) is the same one implemented
-by the built-in providers; no registration is required.
+`read(ctx)` yields raw records; Mic handles schema validation and execution.
+Built-in providers use the [same contract](docs/providers.md#custom-sources),
+without registration. For additional YAML safeguards (aliases, duplicate keys,
+and parser depth/node limits), see [`yaml_source.py`](examples/yaml_source.py).
 
 ## Scoring: multiple metrics and supporting evidence
 
