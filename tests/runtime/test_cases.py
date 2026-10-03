@@ -1,7 +1,6 @@
 """Evaluation cases behavior through the real runner."""
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -10,8 +9,9 @@ from pydantic import AfterValidator, TypeAdapter
 
 import mic
 from mic.integrations.pydantic import pydantic_schema
+from tests.runtime.helpers import cases, scores
 
-from .helpers import evaluation, row
+from .helpers import evaluation, events, row
 
 
 def test_scorer_timeout_retains_output_and_earlier_scores(tmp_path):
@@ -31,20 +31,20 @@ def test_scorer_timeout_retains_output_and_earlier_scores(tmp_path):
         evaluation([row()], task=task, scorers=[first, slow]), output=tmp_path, timeout=0.01
     )
     assert result.exit_code == 1
-    case = result.cases[0]
+    case = cases(result)[0]
     assert case["output"] == 1
     assert case["scores"] == [{"name": "first", "value": 1, "metadata": {}}]
     assert case["errors"][0]["phase"] == "scorer"
     assert case["errors"][0]["scorer"] == "slow"
     assert case["errors"][0]["type"] == "TimeoutError"
-    assert result.manifest["scores"]["slow"]["unavailable_count"] == 1
+    assert scores(result)["slow"].count == 0
 
 
 def test_bare_output_dictionary_is_never_unpacked(tmp_path):
     value = {"output": "domain field", "metadata": {"source": "domain field"}}
     result = mic.run(evaluation([row(value)]), output=tmp_path)
-    assert result.cases[0]["output"] == value
-    assert "task_metadata" not in result.cases[0]
+    assert cases(result)[0]["output"] == value
+    assert "task_metadata" not in cases(result)[0]
 
 
 def test_trial_and_scorer_mutation_are_isolated(tmp_path):
@@ -54,9 +54,8 @@ def test_trial_and_scorer_mutation_are_isolated(tmp_path):
 
     def task(ctx, value):
         assert value == input_value
-        assert ctx.expected == expected_value
+        assert not hasattr(ctx, "expected")
         value["nested"].append(2)
-        ctx.expected["answer"].append(2)
         ctx.metadata["label"] = "mutated"
         return {"answer": [1]}
 
@@ -116,8 +115,8 @@ def test_typed_metadata_is_projected_merged_and_hydrated(tmp_path):
     )
     result = mic.run(spec, output=tmp_path)
     assert result.exit_code == 0
-    assert result.cases[0]["metadata"]["label"] == "row"
-    assert result.cases[0]["task_metadata"]["label"] == "task"
+    assert cases(result)[0]["metadata"]["label"] == "row"
+    assert cases(result)[0]["task_metadata"]["label"] == "task"
 
 
 @pytest.mark.parametrize("phase", ["task", "schema", "scorer"])
@@ -137,10 +136,10 @@ def test_case_failure_does_not_stop_other_rows(tmp_path, phase):
         evaluation([row(), row(2, id="b")], task=task, scorers=[score], output=int), output=tmp_path
     )
     assert result.exit_code == 1
-    assert result.manifest["counts"]["completed"] == 1
-    assert result.manifest["failures"][0]["phase"] == phase
-    assert result.cases[1]["output"] == 2
-    assert result.manifest["scores"]["check"]["unavailable_count"] == 1
+    assert result.summary.trials.completed == 1
+    assert cases(result)[0]["errors"][0]["phase"] == phase
+    assert cases(result)[1]["output"] == 2
+    assert scores(result)["check"].count == 1
 
 
 def test_successful_scores_survive_a_later_scorer_failure(tmp_path):
@@ -153,10 +152,10 @@ def test_successful_scores_survive_a_later_scorer_failure(tmp_path):
         return float("nan")
 
     result = mic.run(evaluation([row()], scorers=[first, later]), output=tmp_path)
-    assert result.cases[0]["output"] == 1
-    assert result.cases[0]["scores"] == [{"name": "first", "value": 0.8, "metadata": {}}]
-    assert result.manifest["scores"]["first"]["mean"] == 0.8
-    assert result.manifest["scores"]["later"]["unavailable_count"] == 1
+    assert cases(result)[0]["output"] == 1
+    assert cases(result)[0]["scores"] == [{"name": "first", "value": 0.8, "metadata": {}}]
+    assert scores(result)["first"].mean == 0.8
+    assert scores(result)["later"].count == 0
     assert result.exit_code == 1
 
 
@@ -194,9 +193,6 @@ def test_unlabeled_and_present_null_remain_distinct_on_disk(tmp_path):
     )
     assert result.exit_code == 0
     assert sorted(seen) == [False, True]
-    rows = [
-        json.loads(line)
-        for line in (tmp_path / "dataset.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    rows = [event["case"] for event in events(tmp_path) if event["type"] == "case_accepted"]
     assert "expected" not in rows[0]
     assert rows[1]["expected"] is None

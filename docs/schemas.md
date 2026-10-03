@@ -58,7 +58,7 @@ def exact(ctx: mic.ScoreContext[Ticket, Decision, Decision, mic.JsonObject]) -> 
 
 
 @mic.eval(name="classify", dataset=tickets, output=Decision, scorers=[exact])
-def classify(ctx: mic.TaskContext[Decision, mic.JsonObject], ticket: Ticket) -> Decision:
+def classify(ctx: mic.TaskContext[mic.JsonObject], ticket: Ticket) -> Decision:
     for index, message in enumerate(ticket.messages):
         if "crash" in message.text.lower():
             return Decision("bug", {"messages": [index]})
@@ -146,7 +146,7 @@ case failure before scoring.
 Native schemas do not coerce strings into numbers, and reject `strict=False`
 explicitly. Normalize source data in a mapper. Union branches are tried in annotation
 order; use a distinguishing `Literal` field for structurally similar dataclasses.
-Snapshots must preserve a meaningful round trip; validation is not a general object
+Normalized records must preserve a meaningful round trip; validation is not a general object
 serialization mechanism.
 
 `InitVar`, `init=False` fields, undeclared instance state, parameterized generic

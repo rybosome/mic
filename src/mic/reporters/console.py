@@ -1,47 +1,20 @@
-"""Plain-text summaries suitable for terminals, logs, and CI."""
+"""Compact console view of the public streaming result."""
 
-from mic.models import JsonObject, JsonValue
-
-
-def _object(value: JsonValue) -> JsonObject:
-    return value if isinstance(value, dict) else {}
+from .._runtime.validation import json_object
+from ..models import JsonObject
 
 
 def format_summary(manifest: JsonObject) -> str:
-    """Keep execution status separate from score quality and explicit gates."""
-    counts = _object(manifest.get("counts"))
-    dataset = _object(manifest.get("dataset"))
-    options = _object(manifest.get("options"))
+    summary = json_object(manifest["summary"])
+    trials = json_object(summary["trials"])
     lines = [
-        str(manifest.get("name", "mic run")),
-        f"Status       {manifest.get('status', 'unknown')}",
-        f"Source       {dataset.get('name', 'unknown')} · {dataset.get('rows', 0)} rows",
-        f"Snapshot     {dataset.get('digest', 'unavailable')}",
-        f"Execution    {counts.get('completed', 0)} completed / {counts.get('planned', 0)} "
-        f"planned · {counts.get('failed', 0)} errors · {counts.get('cancelled', 0)} cancelled",
-        f"Options      {options.get('trials', 1)} trial(s) · "
-        f"concurrency {options.get('concurrency', 1)}",
+        f"Run          {manifest['run_id']}",
+        f"Status       {manifest['status']}",
+        f"Trials       {trials['completed']} completed / {trials['planned']} admitted",
+        f"Failures     {trials['task_failed']} task, {trials['scoring_failed']} scoring",
     ]
-    for name, value in _object(manifest.get("scores")).items():
-        stats = _object(value)
-        mean = stats.get("mean")
-        display = f"{mean:.3f}" if isinstance(mean, (float, int)) else "unscored"
-        lines.append(
-            f"Score        {name} {display} · numeric {stats.get('count', 0)} · "
-            f"unscored {stats.get('null_count', 0)} · "
-            f"unavailable {stats.get('unavailable_count', 0)}"
-        )
-    gates = manifest.get("gates")
-    if isinstance(gates, list) and gates:
-        for value in gates:
-            gate = _object(value)
-            lines.append(
-                f"Quality      {'PASS' if gate.get('passed') else 'FAIL'} "
-                f"{gate.get('expression')} (actual {gate.get('actual')})"
-            )
-    else:
-        lines.append("Quality      no gate configured")
-    for name, value in _object(manifest.get("reporting")).items():
-        status = _object(value)
-        lines.append(f"Reporting    {name}: {status.get('status')} {status.get('url', '')}")
+    for task, value in json_object(summary["tasks"]).items():
+        for metric, stats in json_object(json_object(value)["scores"]).items():
+            detail = json_object(stats)
+            lines.append(f"{task}.{metric}: mean={detail['mean']} count={detail['count']}")
     return "\n".join(lines)

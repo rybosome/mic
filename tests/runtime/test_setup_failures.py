@@ -7,7 +7,7 @@ import pytest
 
 import mic
 
-from .helpers import evaluation, manifest, row
+from .helpers import evaluation, row
 
 
 @pytest.mark.parametrize("component", ["input", "output"])
@@ -40,8 +40,7 @@ def test_broken_schema_description_fails_before_source_access(tmp_path, componen
     with pytest.raises(mic.ConfigurationError, match="schema description unavailable"):
         mic.run(spec, output=tmp_path)
     assert calls == []
-    assert manifest(tmp_path)["status"] == "failed"
-    assert manifest(tmp_path)["exit_code"] == 2
+    assert not (tmp_path / "run.json").exists()
 
 
 def test_noncallable_scorer_fails_before_source_access(tmp_path):
@@ -55,55 +54,12 @@ def test_noncallable_scorer_fails_before_source_access(tmp_path):
     with pytest.raises(mic.ConfigurationError, match="scorer.*callable"):
         mic.run(spec, output=tmp_path)
     assert calls == []
-    assert manifest(tmp_path)["exit_code"] == 2
-
-
-def test_dataset_snapshot_write_failure_saves_failed_manifest_without_tasks(tmp_path):
-    calls = []
-    spec = evaluation([row()], task=lambda _value: calls.append("task"))
-
-    def source():
-        snapshot = tmp_path / "dataset.jsonl"
-        snapshot.unlink()
-        snapshot.mkdir()
-        return [row()]
-
-    spec = replace(spec, dataset=replace(spec.dataset, factory=source))
-    result = mic.run(spec, output=tmp_path)
-    assert calls == []
-    assert result.exit_code == 1
-    saved = manifest(tmp_path)
-    assert saved["status"] == "failed"
-    assert saved["failures"][0]["phase"] == "artifact"
-    assert saved["failures"][0]["type"] in {"IsADirectoryError", "PermissionError"}
-    assert (tmp_path / "report.html").is_file()
-
-
-def test_journal_write_failure_stops_admission_and_retains_local_failure(tmp_path):
-    calls = []
-
-    def task(_, value):
-        calls.append(value)
-        journal = tmp_path / "cases.jsonl"
-        journal.unlink()
-        journal.mkdir()
-        return value
-
-    result = mic.run(
-        evaluation([row(1, id="one"), row(2, id="two")], task=task, concurrency=1), output=tmp_path
-    )
-    assert result.exit_code == 1
-    assert calls == [1]
-    saved = manifest(tmp_path)
-    assert saved["status"] == "failed"
-    assert saved["failures"][-1]["phase"] == "artifact"
-    assert saved["counts"]["completed"] == 1
-    assert saved["counts"]["cancelled"] == 1
+    assert not (tmp_path / "run.json").exists()
 
 
 def test_run_artifacts_include_the_declared_output_schema(tmp_path):
     result = mic.run(evaluation([row()], output=int), output=tmp_path)
     assert result.exit_code == 0
-    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))["output_schema"] == {
-        "type": "integer"
-    }
+    assert json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))["info"]["tasks"][
+        "runtime"
+    ]["output"] == {"type": "integer"}

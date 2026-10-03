@@ -1,9 +1,8 @@
 # Public API and execution contract
 
 The top-level `mic` package contains ordinary authoring, execution, schema, result, and
-error APIs. Advanced provider contracts are imported from `mic.providers`; reporter
-contracts are imported from `mic.reporters`. Runtime materialization and artifact
-implementation modules are private. The package contains `py.typed`, and the entire source
+error APIs. Sources implement `mic.DatasetSource`; event/sink contracts are imported from
+`mic.sinks`. Runtime implementation modules are private. The package contains `py.typed`, and the entire source
 passes strict Pyright.
 
 ## Authoring
@@ -20,14 +19,14 @@ passes strict Pyright.
   revalidates/clones native instances. Maps require string keys; native schemas are
   strict and reject `strict=False`. Use explicit mapping for normalization.
   Optional Pydantic adapters preserve constraints and aliases through strict JSON
-  hydration; canonical snapshots use Python field names. See [schemas](schemas.md).
+  hydration; canonical records use Python field names. See [schemas](schemas.md).
 - `@scorer(requires_expected=True)` accepts a synchronous or async
   function taking `ScoreContext[I,O,E,M]`. Each scorer defines exactly one metric,
   named by the scorer. Return a finite `float`/`int`, `None` when inapplicable, or
   `Score(value, metadata)` when the score needs JSON metadata.
 - `@eval(dataset=..., scorers=[...], trials=1, concurrency=10)`
   accepts a task `(input: I) -> O | TaskResult[O]` or
-  `(TaskContext[E,M], input: I) -> O | TaskResult[O]`, sync or async.
+  `(TaskContext[M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
   `output` and `metadata` keys are not unpacked.
 - All three decorators accept optional `name=`. If omitted or `None`, it defaults
@@ -82,7 +81,7 @@ def classify(ticket: Ticket) -> Classification:
 
 
 def classify_with_context(
-    ctx: mic.TaskContext[Classification], ticket: Ticket
+    ctx: mic.TaskContext, ticket: Ticket
 ) -> Classification:
     ...
 ```
@@ -102,26 +101,23 @@ callbacks are awaited, including awaitables returned by synchronous functions.
 
 Both forms retain static input/output checks, output validation, and `TaskResult`
 metadata support. Input-only tasks receive no context or expected answer. Context-aware
-tasks can access case ID, trial, expected value, and metadata; avoid leaking the reference
-answer into the system under evaluation.
+tasks can access case ID, trial, and metadata. `TaskContext` has no reference
+answer; expected values are available only to scorers.
 
 Context type parameters have defaults:
 
 | Annotation | Equivalent full annotation |
 | --- | --- |
-| `TaskContext[E]` | `TaskContext[E, JsonObject]` |
+| `TaskContext` | `TaskContext[JsonObject]` |
 | `ScoreContext[I, O]` | `ScoreContext[I, O, O, JsonObject]` |
 | `ScoreContext[I, O, E]` | `ScoreContext[I, O, E, JsonObject]` |
 
-Use `TaskContext[E, M]` or `ScoreContext[I, O, E, M]` for custom metadata.
+Use `TaskContext[M]` or `ScoreContext[I, O, E, M]` for custom metadata.
 `E` is the expected type, not necessarily the output type; `M` is case metadata.
 The shorthands work on Python 3.12+ without adding core runtime dependencies.
 `@mic.scorer()` defaults to `requires_expected=True`; opt out explicitly
 for reference-free scorers. `require_expected()` returns the typed reference value or
-raises if missing; the context's `expected` attribute still includes `Missing` in its type.
-
-The signature restrictions are a tightening of the earlier callback contract: replace
-variadic task callbacks with an explicit input or context/input signature.
+raises if missing; `ScoreContext.expected` includes `Missing` in its type.
 
 ## Presence, metadata and stable identity
 
@@ -136,10 +132,12 @@ to an object. Task metadata is shallow-merged onto the JSON projection of datase
 metadata with task keys winning; the result is hydrated through the metadata type
 again. The artifact retains dataset metadata and task metadata separately.
 
-IDs come from mapped IDs or provider record identity. When none exists, the fallback
-combines normalized row content and its position. Explicit IDs must be unique after
-normalization. Physical source information remains in provenance and is excluded
-from the logical dataset digest. Row ordering is part of that digest.
+Case identity is generated from run ID, source occurrence, and zero-based row index.
+A supplied `RawCase.id` becomes a label, not a uniqueness constraint. Duplicate
+labels are accepted without an unbounded seen-ID set. Repeated trials share a
+case ID; use task name and one-based trial number to identify an execution.
+Source digests cover ordered normalized records, including labels but excluding
+physical provenance and generated IDs. A non-exhausted source has a prefix digest.
 
 Serializers must preserve a meaningful JSON round trip. Nonfinite numbers fail;
 there is no automatic `repr`, pickle, or silent null substitution. Validation may
@@ -149,87 +147,109 @@ their own boundaries.
 
 ## Execution and errors
 
-Blocking entrypoints use plain names: `run`, `preflight`, and `inspect_dataset`.
-Async hosts use `await arun`, `await apreflight`, and `await ainspect_dataset`.
-The run pair returns `RunResult(manifest, cases, output_dir, exit_code)`. Setup
-failures raise typed `ConfigurationError`/`DatasetError`; when error artifacts are
-successfully saved, the exception has a note pointing to its report. A dataset-snapshot
-write failure returns exit 1 and saves an artifact-phase failure where the remaining
-evidence files are writable. This also applies to filesystem initialization and
-terminal manifest/report failures: computed cases remain in the returned result,
-and persisted files may be incomplete or stale. Configuration/dataset errors and
-cancellation retain their original exception when error persistence also fails;
-secondary failures appear in exception notes. An existing nonempty output directory
-is rejected without writing into it. Uninspectable schema adapters and non-callable scorers
-fail before source access. Library code does not set process exit status. The CLI
-translates results/errors into exit codes.
+`run(spec, *, output=None, trials=None, concurrency=None, require=(), sinks=(),
+limits=None, max_executions=50_000, timeout=None, on_invalid="abort")` returns
+a compact `RunResult`. Use `await arun(...)` in an async host. Neither retains
+case results or writes files by default.
 
-Configuration precedence is invocation arguments, decorated defaults, then library
-defaults. There is no implicit `.env` loading.
+```python
+result = mic.run(
+    classify,
+    concurrency=2,
+    on_invalid="skip",
+    require=['tasks["classify"].scores["accuracy"].mean >= 0.9'],
+)
+print(result.summary.tasks["classify"].scores["accuracy"])
+print(result.sources)
+raise SystemExit(result.exit_code)
+```
 
-All selected rows are read/validated before tasks start. `ReadLimits` defaults to
-10,000 rows, 64 MiB serialized bytes, 1 MiB per record, and a 60-second source deadline.
-The default maximum is 50,000 row/trial executions. Prefix inspection is an explicit
-selection; caps fail instead of truncating. These are serialized-data limits, not
-an exact heap quota, and output artifact size is not currently capped separately.
+The result contains run identity/status/exit code, `summary`, source summaries,
+requirement outcomes, bounded run-level failures, sink receipts, optional output
+directory, and definition/configuration info. `to_json()` projects it into finite
+JSON. Per-trial evidence goes only to selected sinks, never an implicit case list.
 
-Work is admitted lazily to bounded workers. Every trial gets a fresh nested copy;
-every scorer gets an independent copy of pristine input/expected and validated
-output/merged metadata. Scorers run in declaration order. Final API/report ordering
-is row index then one-based trial number; the on-disk case journal records completion
-order. Earlier successful scores remain if a later scorer fails, and the case still
-fails.
+Configuration errors (invalid schemas, options, requirements, duplicate sink names,
+nonempty output directory) fail before reading sources. Streaming source errors
+instead produce a failed result with exit code 2 and preserve already-admitted work.
+Task/scorer/requirement/sink failures produce exit code 1. Cancellation joins owned
+work, finalizes selected sinks, then re-raises `CancelledError`; the CLI returns 130.
+Library code does not terminate the process.
 
-Async functions are awaited; synchronous functions run in a dedicated bounded
-thread executor. Trial timeout covers task and scorers. On timeout/cancellation,
-running sync callbacks are drained before releasing their slots; a hanging thread
-cannot be forcibly stopped. Use async callbacks and SDK request deadlines when prompt
-cancellation matters. Source reads and exports also clean up cooperatively.
-Cancellation preserves partial evidence then re-raises `CancelledError`; the CLI
-returns 130. No tasks or scorers are retried automatically.
+Each record is read, mapped, validated, and admitted before the next bounded read.
+Tasks and scoring are pipelined per trial, not separate dataset passes.
+A queue and worker pool are both bounded by concurrency. Slow sinks apply
+backpressure. Storage scales with active records, configured definitions, and
+provider page size, not total dataset size. Provider SDKs and custom sinks can
+have their own allocations; this is not a precise process-memory quota.
 
-## Bounded summary models
+Every trial gets isolated input/context. Each scorer gets independent copies of
+pristine input/expected and validated output/merged metadata. Scorers run in
+declaration order; one ordinary scorer failure does not prevent other scorers
+from running. Completed events follow completion order, with no reorder buffer.
 
-`Statistics`, `TrialSummary`, `TaskSummary`, `EvaluationSummary`, and
-`RequirementResult` are immutable public models for streaming evaluation summaries.
-Statistics contain `count`, `mean`, `min`, and `max`; empty observations have a zero
-count and `None` for the remaining fields. Task and score mappings are copied and
-read-only. No model retains individual cases or observations.
+`on_invalid="abort"` stops source admission at the first malformed record.
+`"skip"` emits a rejection and continues for row mapping/schema errors or explicit
+`RecordError` events. Iterator exceptions, resource limits, and transport failures
+remain fatal. An empty/all-rejected evaluation fails. Source failure does not
+cancel previously admitted trials. Side effects already performed are not undone.
 
-`planned` counts admitted trials. Terminal outcomes are mutually exclusive:
-`completed`, `task_failed`, `scoring_failed`, and `cancelled`. `scoring_skipped`
-counts trials with at least one explicit `None` score and can overlap an outcome.
-Timing statistics omit phases that never started. Global means weight observations
-directly, not task means.
+`ReadLimits` defaults: 10,000 raw records, 64 MiB normalized bytes, 1 MiB per
+normalized record, and 60 seconds cumulative active reading/mapping time.
+Providers also account raw bytes where available. Time spent waiting for task or
+sink capacity does not consume the source budget. Caps fail visibly, never
+silently truncate. `max_executions` caps admitted trials, not an estimated source size.
 
-These models are the foundation for the streaming runner; the current runner and
-artifact contracts below remain unchanged in this foundation change.
+Sync callbacks run on bounded threads. Trial timeout covers task, output validation,
+and scorers; it excludes queue/sink time. Timings include cooperative cleanup.
+Running synchronous code cannot be forcibly killed: timeout/cancellation waits
+for it to return before releasing resources. Use SDK request deadlines. Mic does
+not retry tasks, scorers, or sink writes. There is no implicit `.env` loading.
+Invocation options override decorated defaults.
 
-## Reports and statistics
+`preflight` / `apreflight` drain and validate the source without tasks, retaining
+only counts and provenance. They raise `DatasetError` on invalid data and do not
+cache anything for a later run. `inspect_dataset` / `ainspect_dataset` intentionally
+collect a bounded prefix (default 20 records; explicit positive `limit` supported).
 
-Every run writes `dataset.jsonl`, `cases.jsonl`, `run.json`, and `report.html`.
-The manifest records input/expected/metadata and output schemas, selection, logical digest, source provenance, options,
-source-module/framework hashes, versions, metrics, failures, and export status.
-It intentionally omits environment dumps. Full evaluated values remain available.
-Code provenance's framework hash covers Python sources throughout the `mic` package.
-The [artifact reference](artifacts.md) specifies field shapes, partial states, and
-machine-readable schemas for the current format.
-Reports embed case data, and exception text and provenance may be sensitive. Read
-[sensitive evidence and persistence failures](reporting.md#sensitive-evidence-and-sharing)
-before sharing reports or enabling remote export.
+## Bounded summaries and requirements
 
-Scores are finite numbers or `None`; booleans are rejected. Numeric means exclude
-null/unavailable values. Percentiles use TypeScript's nearest-rank convention.
-Numeric, null and unavailable counts are reported for every scorer.
-The CLI gate grammar is `metric >= number` (also `<=`, `==`, `>`, `<`); the argument
-must be shell-quoted. Missing numeric values make a configured gate unevaluable
-and therefore failing. Any execution error fails regardless of the numeric mean.
+`Statistics(count, mean, min, max)` contains numeric observations only. No
+percentiles are retained. Empty statistics have count 0 and all other fields
+`None`. `TaskSummary` groups `scores` and `trials`; `EvaluationSummary` groups
+`tasks` by evaluation name and global `trials`. Mappings are copied and read-only.
 
-Optional reporters implement `name`, `async prepare()`, and
-`async report(manifest, cases) -> JsonObject`. Preparation validates configuration;
-reporting runs only after complete local artifacts exist. Reporters receive copies
-so they cannot mutate local evidence. Export failure/cancellation is recorded
-separately and never causes task replay.
-Artifact failures prevent export; failure to save a reporter's outcome prevents
-subsequent reporters from starting. The completed remote write is not undone or
-repeated. In-memory results retain the known outcome when the filesystem cannot.
+`TrialSummary` fields:
+
+- `planned`: admitted commitments, not an estimate of unread rows.
+- `completed`, `task_failed`, `scoring_failed`, `cancelled`: exclusive terminal
+  outcomes whose sum equals planned after cleanup.
+- `scoring_skipped`: trials with at least one explicit `None` score; overlaps
+  terminal outcomes. It does not count scorers which never started.
+- `task_ms`, `scoring_ms`, `total_ms`: statistics over observed phase timings;
+  phases never started are omitted. Global means weight individual observations.
+
+Requirements use these same fields, for example
+`tasks["classify"].scores["accuracy"].min >= 0.7` or
+`trials.scoring_ms.max <= 10000`. The closed grammar accepts explicit field/key
+access and one comparison against a finite number, never Python evaluation.
+Unknown task/metric names are rejected before effects. `None` fails every
+comparison, including `!=`. Multiple requirements are ANDed. Passing requirements
+cannot override execution or source failures. See [CLI gates](cli.md#quality-gates).
+
+## Optional results and evidence
+
+`output=".mic/run"` opts into a JSONL event recorder and atomic final `run.json`.
+The directory must be empty or absent. `mic report .mic/run` renders recorded
+trials afterward with explicit size caps; HTML is never generated automatically.
+
+Custom sinks implement `ResultSink.open(RunInfo)` as an async context manager
+yielding a `SinkSession` with `write(RunEvent)` and
+`finish(EvaluationOutcome) -> SinkReceipt`. Calls are serialized, awaited, and
+isolated with copied data. Cleanup occurs on success, failure, and cancellation.
+A failed sink is disabled; healthy sinks finalize. The outcome passed to
+`finish` describes computation, not the not-yet-known outcome of all sink cleanup.
+The final `RunResult` incorporates every sink receipt.
+
+See [sink lifecycle and Braintrust](reporting.md), [artifact schemas](artifacts.md),
+and [source authoring](providers.md#custom-sources).

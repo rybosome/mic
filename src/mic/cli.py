@@ -8,13 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import mic
-from mic._runtime.artifacts import has_artifact_failure
 from mic._runtime.discovery import list_definitions, resolve_definition
 from mic.errors import ConfigurationError, DatasetError, MicError
 from mic.models import JsonObject
-from mic.reporters.braintrust import BraintrustReporter
 from mic.reporters.console import format_summary
 from mic.reporters.html import write_report
+from mic.sinks.braintrust import BraintrustSink
 
 
 def _limits(parser: argparse.ArgumentParser) -> None:
@@ -25,7 +24,7 @@ def _limits(parser: argparse.ArgumentParser) -> None:
         "--dataset-timeout",
         type=float,
         default=60.0,
-        help="Overall dataset materialization deadline in seconds",
+        help="Cumulative source-read time budget; excludes task/sink backpressure",
     )
 
 
@@ -34,10 +33,6 @@ def _execution(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--concurrency", type=int)
     parser.add_argument("--max-executions", type=int, default=50_000)
     _limits(parser)
-    parser.add_argument("--braintrust-project", help="Opt in to exporting this run to Braintrust")
-    parser.add_argument("--braintrust-experiment")
-    parser.add_argument("--braintrust-app-url")
-    parser.add_argument("--braintrust-org")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,18 +52,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preflight.add_argument("selector")
     _execution(preflight)
-    run = commands.add_parser("run", help="Run an evaluation and save local artifacts")
+    run = commands.add_parser("run", help="Run an evaluation; --output opts into local evidence")
     run.add_argument("selector")
     _execution(run)
+    run.add_argument("--braintrust-project", help="Opt in to exporting this run to Braintrust")
+    run.add_argument("--braintrust-experiment")
+    run.add_argument("--braintrust-app-url")
+    run.add_argument("--braintrust-org")
     run.add_argument("--output", type=Path)
     run.add_argument("--timeout", type=float, help="Cooperative per-trial timeout in seconds")
-    run.add_argument("--require", action="append", default=[], metavar="METRIC>=VALUE")
+    run.add_argument("--require", action="append", default=[], metavar="SUMMARY_PATH >= VALUE")
+    run.add_argument("--on-invalid", choices=("abort", "skip"), default="abort")
     run.add_argument("--json", action="store_true", help="Print the complete final run manifest")
     report = commands.add_parser(
         "report", help="Render existing artifacts without running an evaluation"
     )
     report.add_argument("run_path", type=Path, help="Run directory or run.json")
     report.add_argument("--output", type=Path)
+    report.add_argument("--max-cases", type=int, default=10_000)
+    report.add_argument("--max-bytes", type=int, default=64 * 1024 * 1024)
     report.add_argument("--open", action="store_true", help="Open the HTML in your default browser")
     return parser
 
@@ -82,13 +84,13 @@ def _read_limits(args: argparse.Namespace) -> mic.ReadLimits:
     )
 
 
-def _reporters(args: argparse.Namespace) -> list[BraintrustReporter]:
+def _sinks(args: argparse.Namespace) -> list[BraintrustSink]:
     if not args.braintrust_project:
         if any((args.braintrust_experiment, args.braintrust_app_url, args.braintrust_org)):
             raise ConfigurationError("Braintrust options require --braintrust-project")
         return []
     return [
-        BraintrustReporter(
+        BraintrustSink(
             project=args.braintrust_project,
             experiment=args.braintrust_experiment,
             app_url=args.braintrust_app_url,
@@ -113,7 +115,9 @@ def _execute(args: argparse.Namespace) -> int:
                 print(f"{row.kind:8} {row.name:28} {row.selector}")
         return 0
     if args.command == "report":
-        destination = write_report(args.run_path, output=args.output).resolve()
+        destination = write_report(
+            args.run_path, output=args.output, max_cases=args.max_cases, max_bytes=args.max_bytes
+        ).resolve()
         print(destination)
         if args.open:
             webbrowser.open(destination.as_uri())
@@ -127,7 +131,6 @@ def _execute(args: argparse.Namespace) -> int:
         return 0
     if not isinstance(definition, mic.Evaluation):
         raise ConfigurationError(f"{args.command} requires an evaluation definition")
-    reporters = _reporters(args)
     if args.command == "preflight":
         result: JsonObject = mic.preflight(
             definition,
@@ -135,7 +138,6 @@ def _execute(args: argparse.Namespace) -> int:
             concurrency=args.concurrency,
             limits=_read_limits(args),
             max_executions=args.max_executions,
-            reporters=reporters,
         )
         _print_json(result)
         return 0
@@ -148,16 +150,19 @@ def _execute(args: argparse.Namespace) -> int:
         require=args.require,
         limits=_read_limits(args),
         max_executions=args.max_executions,
-        reporters=reporters,
+        sinks=_sinks(args),
+        on_invalid=args.on_invalid,
     )
     if args.json:
-        _print_json(run_result.manifest)
+        _print_json(run_result.to_json())
     else:
-        print(format_summary(run_result.manifest))
-        if has_artifact_failure(run_result.manifest):
-            print(f"Evidence     {run_result.output_dir} may be incomplete or stale")
-        else:
-            print(f"Report       {run_result.output_dir / 'report.html'}")
+        print(format_summary(run_result.to_json()))
+        if run_result.output_dir is not None:
+            print(f"Evidence     {run_result.output_dir}")
+            if any(
+                s.status != "completed" for s in run_result.sinks if s.name in ("jsonl", "manifest")
+            ):
+                print("Warning      Recorded evidence may be incomplete or stale")
     return run_result.exit_code
 
 

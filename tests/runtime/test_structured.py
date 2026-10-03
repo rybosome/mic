@@ -16,30 +16,33 @@ from examples.structured import (
     classify_file,
     tickets,
 )
-from mic._runtime.materialization import load_dataset
+from tests.datasets.helpers import collect_dataset
+from tests.runtime.helpers import cases, scores, source
 
 
 def test_native_and_file_complex_cases_match_with_validated_output_and_metadata(tmp_path):
     memory = mic.run(classify, trials=3, output=tmp_path / "memory")
     file = mic.run(classify_file, trials=3, output=tmp_path / "file")
     assert memory.exit_code == file.exit_code == 0
-    assert memory.manifest["dataset"]["digest"] == file.manifest["dataset"]["digest"]
-    assert memory.manifest["counts"]["completed"] == file.manifest["counts"]["completed"] == 6
-    assert memory.manifest["scores"]["label"]["mean"] == 1
-    assert file.manifest["scores"]["evidence"]["mean"] == 1
-    for row in memory.cases:
+    assert source(memory).digest == source(file).digest
+    assert memory.summary.trials.completed == file.summary.trials.completed == 6
+    assert scores(memory)["label"].mean == 1
+    assert scores(file)["evidence"].mean == 1
+    for row in cases(memory):
         assert row["output"]["evidence"] == {"messages": [0]}
         assert row["output"]["owner"] is None
         assert row["metadata"] == {"segment": "demo", "model": None}
         assert row["task_metadata"] == {"model": "rules"}
     manifest = json.loads((tmp_path / "file" / "run.json").read_text(encoding="utf-8"))
-    assert manifest["dataset"]["schema"]["input"]
-    assert "messages" in (tmp_path / "file" / "report.html").read_text(encoding="utf-8")
+    assert next(iter(manifest["info"]["tasks"].values()))["dataset"]["input"]
+    from mic.reporters.html import write_report
+
+    assert "messages" in write_report(tmp_path / "file").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
 async def test_every_nested_consumer_gets_dataclass_instances():
-    snapshot = await load_dataset(tickets)
+    snapshot = await collect_dataset(tickets)
     case = snapshot.cases[0]
     assert isinstance(case.input, Ticket)
     assert isinstance(case.input.messages[0], Message)
@@ -87,28 +90,29 @@ def test_bad_nested_input_has_field_path_and_launches_zero_tasks(tmp_path):
         ]
 
     @mic.eval(name="broken", dataset=broken, output=Decision, scorers=[])
-    def task(ctx: mic.TaskContext[Decision, Metadata], value: Ticket) -> Decision:
+    def task(ctx: mic.TaskContext[Metadata], value: Ticket) -> Decision:
         calls.append(value)
         return Decision("bug")
 
-    with pytest.raises(mic.DatasetError, match=r"messages.*0.*text"):
-        mic.run(task, output=tmp_path / "bad-input")
+    result = mic.run(task, output=tmp_path / "bad-input")
+    assert result.exit_code == 2
+    assert source(result).records_rejected == 1
     assert calls == []
 
 
 def test_bad_nested_output_is_a_schema_failure_before_scoring(tmp_path):
     @mic.eval(name="bad-output", dataset=tickets, output=Decision, scorers=[])
-    def task(ctx: mic.TaskContext[Decision, Metadata], value: Ticket) -> Decision:
+    def task(ctx: mic.TaskContext[Metadata], value: Ticket) -> Decision:
         decision = Decision("bug")
         decision.evidence["messages"] = ["wrong"]  # Deliberate external-output type violation.
         return decision
 
     result = mic.run(task, output=tmp_path / "bad-output")
     assert result.exit_code == 1
-    assert result.manifest["counts"]["failed"] == 2
-    for case in result.cases:
+    assert result.summary.trials.task_failed == 2
+    for case in cases(result):
         assert case["errors"][0]["phase"] == "schema"
-        assert "evidence" in case["errors"][0]["message"]
+        assert case["errors"][0]["type"] == "SchemaError"
 
 
 def test_a_custom_schema_adapter_can_add_domain_constraints(tmp_path):
@@ -136,8 +140,9 @@ def test_a_custom_schema_adapter_can_add_domain_constraints(tmp_path):
         return [mic.RawCase(input={"value": -1}, expected=0)]
 
     @mic.eval(name="custom", dataset=data, output=int, scorers=[])
-    def task(ctx: mic.TaskContext[int, mic.JsonObject], count: Count) -> int:
+    def task(ctx: mic.TaskContext[mic.JsonObject], count: Count) -> int:
         return count.value
 
-    with pytest.raises(mic.DatasetError, match="nonnegative"):
-        mic.run(task, output=tmp_path / "custom")
+    result = mic.run(task, output=tmp_path / "custom")
+    assert result.exit_code == 2
+    assert source(result).records_rejected == 1

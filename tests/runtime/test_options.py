@@ -6,7 +6,7 @@ import pytest
 
 import mic
 
-from .helpers import evaluation, manifest, row
+from .helpers import evaluation, row, scores
 
 
 def test_low_score_and_explicit_gate_have_distinct_exit_codes(tmp_path):
@@ -14,20 +14,20 @@ def test_low_score_and_explicit_gate_have_distinct_exit_codes(tmp_path):
     low = mic.run(spec, output=tmp_path / "low")
     assert low.exit_code == 0
     assert low.status == "completed"
-    assert low.manifest["scores"]["exact"]["mean"] == 0
-    gated = mic.run(spec, output=tmp_path / "gated", require=["exact>=0.9"])
+    assert scores(low)["exact"].mean == 0
+    gated = mic.run(
+        spec, output=tmp_path / "gated", require=['tasks["runtime"].scores["exact"].mean >= 0.9']
+    )
     assert gated.exit_code == 1
-    assert gated.manifest["counts"]["failed"] == 0
-    assert gated.manifest["gates"][0]["passed"] is False
+    assert gated.summary.trials.task_failed == 0
+    assert gated.requirements[0].passed is False
 
 
-def test_v2_manifest_omits_removed_authoring_options(tmp_path):
+def test_result_version_and_summary_only_shape(tmp_path):
     result = mic.run(evaluation([row()]), output=tmp_path)
-    manifest = result.manifest
-    assert manifest["schema_version"] == "mic-run-v2"
-    assert "skipped" not in manifest["counts"]
-    assert "model_preset" not in manifest["options"]
-    assert "strict" not in manifest["dataset"]["schema"]
+    assert result.to_json()["schema_version"] == "mic-run-v3"
+    assert not hasattr(result, "cases")
+    assert "p95" not in result.to_json()["summary"]["trials"]["total_ms"]
 
 
 @pytest.mark.parametrize(
@@ -48,7 +48,7 @@ def test_invalid_execution_config_never_calls_source_or_task(tmp_path, setting, 
     with pytest.raises(mic.ConfigurationError):
         mic.run(spec, output=tmp_path, **{setting: value})
     assert calls == []
-    assert manifest(tmp_path)["exit_code"] == 2
+    assert not (tmp_path / "run.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -73,27 +73,25 @@ def test_duplicate_scorer_name_rejected_before_data_read(tmp_path):
 
 
 def test_empty_dataset_and_null_only_metric_do_not_pass_a_gate(tmp_path):
-    result = mic.run(evaluation([]), output=tmp_path / "empty", require=["exact>=0"])
+    result = mic.run(
+        evaluation([]),
+        output=tmp_path / "empty",
+        require=['tasks["runtime"].scores["exact"].mean >= 0'],
+    )
     assert result.exit_code == 1
-    assert result.manifest["scores"]["exact"]["mean"] is None
+    assert scores(result)["exact"].mean is None
 
     @mic.scorer(name="maybe", requires_expected=False)
     def maybe(ctx):
         return None
 
     result = mic.run(
-        evaluation([row()], scorers=[maybe]), output=tmp_path / "null", require=["maybe>=0"]
+        evaluation([row()], scorers=[maybe]),
+        output=tmp_path / "null",
+        require=['tasks["runtime"].scores["maybe"].mean >= 0'],
     )
-    assert result.manifest["scores"]["maybe"] == {
-        "count": 0,
-        "mean": None,
-        "min": None,
-        "max": None,
-        "p50": None,
-        "p95": None,
-        "null_count": 1,
-        "unavailable_count": 0,
-    }
+    assert scores(result)["maybe"] == mic.Statistics(0, None, None, None)
+    assert result.summary.trials.scoring_skipped == 1
     assert result.exit_code == 1
 
 
@@ -106,13 +104,10 @@ async def test_sync_entrypoints_give_async_host_instructions():
         mic.inspect_dataset(evaluation([row()]).dataset)
 
 
-def test_resource_caps_prevent_all_task_execution(tmp_path):
-    calls = []
-    spec = evaluation([row(), row(2, id="b")], task=lambda _value: calls.append(1), trials=2)
-    with pytest.raises(mic.ConfigurationError, match="max_executions"):
-        mic.run(spec, output=tmp_path, max_executions=3)
-    assert calls == []
-    assert manifest(tmp_path)["exit_code"] == 2
+def test_resource_caps_stop_admission_and_preserve_completed_work(tmp_path):
+    result = mic.run(evaluation([row(), row(2)], trials=2), output=tmp_path, max_executions=3)
+    assert result.exit_code == 2
+    assert result.summary.trials.planned == result.summary.trials.completed == 3
 
 
 async def test_apreflight_reads_source_once_and_executes_no_callbacks():
@@ -131,20 +126,20 @@ def test_sync_preflight_and_inspection_use_blocking_entrypoints():
     ready = mic.preflight(spec)
     inspected = mic.inspect_dataset(spec.dataset, limit=1)
     assert ready["tasks_executed"] == 0
-    assert inspected["dataset"]["rows"] == 1
+    assert inspected["dataset"]["records_accepted"] == 1
 
 
 async def test_async_dataset_inspection_uses_prefixed_entrypoint():
     inspected = await mic.ainspect_dataset(evaluation([row()]).dataset, limit=1)
-    assert inspected["dataset"]["rows"] == 1
+    assert inspected["dataset"]["records_accepted"] == 1
 
 
 def test_required_scorer_rejects_unlabeled_cases_before_execution(tmp_path):
     calls = []
     schema = mic.case_schema(input=int, expected=int, expected_policy="optional")
-    with pytest.raises(mic.DatasetError, match="require expected"):
-        mic.run(
-            evaluation([{"input": 1}], schema=schema, task=lambda _value: calls.append(1)),
-            output=tmp_path,
-        )
+    result = mic.run(
+        evaluation([{"input": 1}], schema=schema, task=lambda _value: calls.append(1)),
+        output=tmp_path,
+    )
+    assert result.exit_code == 2
     assert calls == []

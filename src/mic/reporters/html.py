@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mic._runtime.files import atomic_write
-from mic._runtime.validation import json_object, loads
+from mic._runtime.validation import json_object, loads, positive_integer
 from mic.errors import ConfigurationError
 from mic.models import JsonObject
 
@@ -34,7 +34,7 @@ def render_report(manifest: JsonObject, cases: Sequence[JsonObject]) -> str:
     replacements = {
         "__SCRIPT_HASH__": script_hash,
         "__SCRIPT__": script,
-        "__TITLE__": html.escape(str(manifest.get("name", "mic run")), quote=True),
+        "__TITLE__": html.escape("Mic evaluation", quote=True),
         "__DATA__": payload,
     }
     # A single pass keeps literal template markers in user titles/data unchanged.
@@ -45,38 +45,67 @@ def render_report(manifest: JsonObject, cases: Sequence[JsonObject]) -> str:
     )
 
 
-def write_report(run_path: Path, output: Path | None = None) -> Path:
-    """Re-render a saved run without definitions, optional SDKs, or task execution."""
+def write_report(
+    run_path: Path,
+    output: Path | None = None,
+    *,
+    max_cases: int = 10_000,
+    max_bytes: int = 64 * 1024 * 1024,
+) -> Path:
+    """Render only the current event format, with explicit in-memory report caps."""
+    positive_integer("max_cases", max_cases)
+    positive_integer("max_bytes", max_bytes)
     run_path = Path(run_path)
     if run_path.is_dir():
         run_path /= "run.json"
     try:
         destination = Path(output) if output is not None else run_path.parent / "report.html"
-        artifacts = [run_path, run_path.parent / "cases.jsonl", run_path.parent / "dataset.jsonl"]
-        for artifact in artifacts:
+        events_path = run_path.parent / "events.jsonl"
+        for artifact in (run_path, events_path):
             if destination.resolve() == artifact.resolve() or (
                 destination.exists() and artifact.exists() and destination.samefile(artifact)
             ):
                 raise ConfigurationError(
                     f"Report output would overwrite source artifact {artifact}"
                 )
-        manifest = json_object(loads(run_path.read_text(encoding="utf-8")))
-        if manifest.get("schema_version") != "mic-run-v2":
-            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v2")
-        cases_path = run_path.parent / "cases.jsonl"
+        with run_path.open("rb") as stream:
+            data = stream.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise ConfigurationError("Report exceeds max_bytes")
+        manifest = json_object(loads(data))
+        if manifest.get("schema_version") != "mic-run-v3":
+            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v3")
+        if manifest.get("status") not in ("completed", "failed", "cancelled"):
+            raise ConfigurationError("Run evidence has not been finalized")
         cases: list[JsonObject] = []
-        with cases_path.open(encoding="utf-8") as stream:
-            for number, line in enumerate(stream, 1):
-                if line.strip():
-                    try:
-                        cases.append(json_object(loads(line)))
-                    except (TypeError, ValueError) as exc:
-                        raise ConfigurationError(
-                            f"Invalid case artifact at {cases_path}:{number}: {exc}"
-                        ) from exc
+        consumed = len(data)
+        with events_path.open("rb") as stream:
+            while line := stream.readline(max_bytes - consumed + 1):
+                consumed += len(line)
+                if consumed > max_bytes:
+                    raise ConfigurationError("Report exceeds max_bytes")
+                event = json_object(loads(line))
+                if event.get("schema_version") != "mic-event-v1":
+                    raise ConfigurationError(
+                        "Unsupported event artifact schema; expected mic-event-v1"
+                    )
+                if event.get("type") == "trial_finished":
+                    if len(cases) >= max_cases:
+                        raise ConfigurationError("Report exceeds max_cases")
+                    result = json_object(event["result"])
+                    result.update({"task": event["task"], "source_id": event["source_id"]})
+                    cases.append(result)
+                elif event.get("type") not in (
+                    "case_accepted",
+                    "record_rejected",
+                    "source_finished",
+                ):
+                    raise ConfigurationError("Unknown recorded event type")
         rendered = render_report(manifest, cases)
         destination.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(destination, (rendered,))
         return destination
-    except (OSError, TypeError, ValueError) as exc:
-        raise ConfigurationError(f"Cannot render report from {run_path}: {exc}") from exc
+    except ConfigurationError:
+        raise
+    except (OSError, TypeError, ValueError, KeyError):
+        raise ConfigurationError("Cannot render recorded evaluation evidence") from None

@@ -124,17 +124,3 @@ def normalize_score(raw: object, name: str) -> JsonObject:
         raise ValueError(f"Score {name!r} must be a finite number or None")
     normalized = cast(float | int | None, value)
     return {"name": name, "value": normalized, "metadata": json_object(metadata)}
-
-
-def numeric_stats(values: Sequence[float]) -> JsonObject:
-    ordered = sorted(values)
-    if not ordered:
-        return {"count": 0, "mean": None, "min": None, "max": None, "p50": None, "p95": None}
-    return {
-        "count": len(ordered),
-        "mean": math.fsum(x / len(ordered) for x in ordered),
-        "min": ordered[0],
-        "max": ordered[-1],
-        "p50": ordered[max(0, math.ceil(0.50 * len(ordered)) - 1)],
-        "p95": ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)],
-    }

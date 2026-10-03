@@ -44,11 +44,8 @@ def read_jsonl(path):
 
 def assert_directory(path):
     manifest = json.loads((path / "run.json").read_text(encoding="utf-8"))
-    rows = read_jsonl(path / "dataset.jsonl")
-    cases = read_jsonl(path / "cases.jsonl")
-    assert_artifact("run-v2", manifest)
-    for row in rows:
-        assert_artifact("dataset-row-v2", row)
-    for case in cases:
-        assert_artifact("case-record-v2", case)
-    return manifest, rows, cases
+    events = read_jsonl(path / "events.jsonl")
+    assert_artifact("run-v3", manifest)
+    for event in events:
+        assert_artifact("event-v1", event)
+    return manifest, events

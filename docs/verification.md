@@ -108,7 +108,7 @@ Generate reports using the README commands, then check:
 2. The fixed evaluation reports 1.0 against the same dataset digest.
 3. The nullable example distinguishes an unscored value from zero and failure.
 4. The failure example preserves successful cases and shows the failed phase and traceback.
-5. `--require 'exact>=0.9'` exits 1 for the baseline without converting low quality
+5. `--require 'tasks["triage.baseline"].scores["exact"].mean>=0.9'` exits 1 for the baseline without converting low quality
    into an execution error.
 
 The HTML provides case search, execution/unscored filtering, keyboard navigation,

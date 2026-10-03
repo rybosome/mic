@@ -5,17 +5,17 @@ from tests.typing.positive import exact, text_data
 
 
 @mic.eval(name="wrong-input", dataset=text_data, output=str, scorers=[exact])  # expect-error
-def wrong_input(ctx: mic.TaskContext[str, mic.JsonObject], value: int) -> str:
+def wrong_input(ctx: mic.TaskContext[mic.JsonObject], value: int) -> str:
     return str(value)
 
 
 @mic.eval(name="wrong-return", dataset=text_data, output=str, scorers=[exact])  # expect-error
-def wrong_return(ctx: mic.TaskContext[str, mic.JsonObject], value: str) -> int:
+def wrong_return(ctx: mic.TaskContext[mic.JsonObject], value: str) -> int:
     return len(value)
 
 
-@mic.eval(name="wrong-expected", dataset=text_data, output=str, scorers=[exact])  # expect-error
-def wrong_expected(ctx: mic.TaskContext[int, mic.JsonObject], value: str) -> str:
+@mic.eval(name="wrong-metadata", dataset=text_data, output=str, scorers=[exact])  # expect-error
+def wrong_expected(ctx: mic.TaskContext[int], value: str) -> str:
     return value
 
 
@@ -54,7 +54,7 @@ async def wrong_async_output(value: str) -> mic.TaskResult[int]:
 @mic.eval(  # expect-error
     name="wrong-context-default", dataset=text_data, output=str, scorers=[exact]
 )
-def wrong_context_default(ctx: mic.TaskContext[int], value: str) -> str:
+def wrong_context_default(ctx: mic.TaskContext[str], value: str) -> str:
     return value
 
 
@@ -62,5 +62,9 @@ def wrong_default_access(ctx: mic.ScoreContext[str, int]) -> str:
     return ctx.require_expected()  # expect-error
 
 
-def wrong_metadata_access(ctx: mic.TaskContext[str]) -> str:
+def wrong_metadata_access(ctx: mic.TaskContext) -> str:
     return ctx.metadata  # expect-error
+
+
+def no_task_reference(ctx: mic.TaskContext) -> object:
+    return ctx.expected  # expect-error

@@ -1,18 +1,20 @@
-"""Opt-in Braintrust export. Never delegates execution to Braintrust Eval."""
+"""Incremental, opt-in Braintrust export; never re-executes evaluations."""
 
-import asyncio
 import copy
 import importlib
 import json
 import math
 import os
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
+from typing import Any, cast
 from urllib.parse import urlparse
 
-from mic._async import drain
+from mic._runtime.callbacks import CallbackPool
 from mic.errors import ConfigurationError
 from mic.models import JsonObject
+from mic.results import EvaluationOutcome, RunInfo, SinkReceipt
+from mic.sinks.base import RunEvent, TrialFinished
 
 
 def _synchronous_state(sdk: Any) -> Any:
@@ -35,7 +37,7 @@ def _synchronous_state(sdk: Any) -> Any:
             "Braintrust SDK logger does not support reliable synchronous export"
         )
     logger.sync_flush = True
-    # The reporter flushes bounded batches. A small SDK queue must not drop spans
+    # The sink flushes one bounded trial at a time. A small SDK queue must not drop spans
     # before flush gets a chance to surface a remote failure.
     logger.enforce_queue_size_limit(False)
     return state
@@ -94,12 +96,8 @@ def _events(manifest: JsonObject, cases: Sequence[JsonObject]) -> list[JsonObjec
     return events
 
 
-class BraintrustReporter:
-    """Explicit experiment sink with a lazy optional SDK and injectable test boundary.
-
-    ``prepare`` verifies local configuration only; it cannot prove remote permissions.
-    Cloud access occurs only in ``report`` after the core has saved local results.
-    """
+class BraintrustSink:
+    """Opt-in streaming experiment sink; a failed run can leave partial remote evidence."""
 
     name = "braintrust"
 
@@ -121,12 +119,10 @@ class BraintrustReporter:
         self.org_name = org_name
         self._sdk: Any = sdk
         self._injected = sdk is not None
-        self._state: Any = None
-        self._prepared = False
 
     async def prepare(self) -> None:
         if not self.project.strip():
-            raise ConfigurationError("Braintrust reporter requires a nonempty project")
+            raise ConfigurationError("Braintrust sink requires a nonempty project")
         if self.experiment is not None and not self.experiment.strip():
             raise ConfigurationError("Braintrust experiment must be nonempty when supplied")
         if self.app_url is not None:
@@ -146,84 +142,89 @@ class BraintrustReporter:
                 ) from exc
         if not callable(getattr(self._sdk, "init", None)):
             raise ConfigurationError("Braintrust SDK must expose init()")
-        self._prepared = True
 
-    async def report(self, manifest: JsonObject, cases: Sequence[JsonObject]) -> JsonObject:
-        if not self._prepared:
-            raise ConfigurationError("Braintrust reporter must be prepared before reporting")
-        events = _events(manifest, cases)
-        upload = asyncio.create_task(asyncio.to_thread(self._upload, manifest, cases, events))
+    @asynccontextmanager
+    async def open(self, run: RunInfo) -> AsyncGenerator["_Session"]:
+        await self.prepare()
+        session = _Session(self, run, self._sdk, self._injected, self._api_key)
         try:
-            return await asyncio.shield(upload)
-        except asyncio.CancelledError:
-            # Python cannot stop an active SDK thread. Drain it before returning
-            # cancellation, so no hidden export continues after the run returns.
-            # The remote experiment may already contain all or part of the run.
-            try:
-                await drain(upload)
-            except Exception:
-                pass
-            raise
+            yield session
+        finally:
+            await session.pool.close()
 
-    def _upload(
-        self, manifest: JsonObject, cases: Sequence[JsonObject], events: list[JsonObject]
-    ) -> JsonObject:
+
+class _Session:
+    def __init__(
+        self, sink: BraintrustSink, run: RunInfo, sdk: Any, injected: bool, api_key: str | None
+    ) -> None:
+        self.sink = sink
+        self.run = run
+        self.pool = CallbackPool(1)
+        self.experiment: Any = None
+        self.rows = 0
+        self._sdk = sdk
+        self._injected = injected
+        self._api_key = api_key
+
+    def _initialize(self) -> None:
+        sink = self.sink
         options: dict[str, Any] = {
-            "project": self.project,
-            "experiment": self.experiment or f"{manifest.get('name')}-{manifest.get('run_id')}",
+            "project": sink.project,
+            "experiment": sink.experiment or f"mic-{self.run.run_id}",
             "set_current": False,
             "update": False,
-            "metadata": {
-                "mic_run_id": manifest.get("run_id"),
-                "mic_schema_version": manifest.get("schema_version"),
-            },
+            "metadata": {"mic_run_id": self.run.run_id, "mic_schema_version": "mic-run-v3"},
         }
         for key, value in {
             "api_key": self._api_key or os.environ.get("BRAINTRUST_API_KEY"),
-            "app_url": self.app_url,
-            "org_name": self.org_name,
+            "app_url": sink.app_url,
+            "org_name": sink.org_name,
         }.items():
             if value is not None:
                 options[key] = value
         if not self._injected:
-            if self._state is None:
-                self._state = _synchronous_state(self._sdk)
-            options["state"] = self._state
-        experiment = self._sdk.init(**options)
+            options["state"] = _synchronous_state(self._sdk)
+        self.experiment = self._sdk.init(**options)
+
+    async def write(self, event: RunEvent) -> None:
+        if not isinstance(event, TrialFinished):
+            return
+        projection = _events(
+            {
+                "run_id": self.run.run_id,
+                "dataset": {"source_id": event.source_id, "task": event.task},
+            },
+            [event.result],
+        )[0]
+        await self.pool.invoke(self._write, event, projection)
+
+    def _write(self, event: TrialFinished, projection: JsonObject) -> None:
+        if self.experiment is None:
+            self._initialize()
+        experiment = cast(Any, self.experiment)
+        span = experiment.start_span(
+            name=f"{event.task} · {event.case_id} · trial {event.trial}",
+            id=f"{event.case_id}:{event.task}:t{event.trial}",
+            set_current=False,
+        )
         try:
-            for index, (case, event) in enumerate(zip(cases, events, strict=True), 1):
-                span = experiment.start_span(
-                    name=f"{case.get('case_id')} · trial {case.get('trial')}",
-                    id=f"{manifest.get('run_id')}:{case.get('row_index')}:{case.get('trial')}",
-                    set_current=False,
-                )
-                try:
-                    span.log(**event)
-                except Exception as exc:
-                    try:
-                        span.end()
-                    except Exception as end_error:
-                        exc.add_note(f"Ending Braintrust span also failed: {end_error}")
-                    raise
-                else:
-                    span.end()
-                if index % 100 == 0:
-                    experiment.flush()
-            experiment.flush()
-        except Exception as exc:
-            # Drain any earlier queued spans before returning a partial-export failure.
-            # Otherwise the SDK's process-exit hook could upload them later.
-            try:
-                experiment.flush()
-            except Exception as flush_error:
-                exc.add_note(f"Final Braintrust flush also failed: {flush_error}")
-            raise
-        summary = experiment.summarize(summarize_scores=False)
-        result: JsonObject = {"status": "completed", "rows": len(events), "flushed": True}
-        url: object = getattr(summary, "experiment_url", None)
-        if isinstance(url, str):
-            result["url"] = url
-        experiment_id: object = getattr(experiment, "id", None)
-        if isinstance(experiment_id, str):
-            result["experiment_id"] = experiment_id
-        return result
+            span.log(**projection)
+        finally:
+            span.end()
+        # One bounded trial at a time. Do not retry a failed/uncertain write.
+        experiment.flush()
+        self.rows += 1
+
+    async def finish(self, outcome: EvaluationOutcome) -> SinkReceipt:
+        details: JsonObject = {"rows": self.rows}
+        if self.experiment is not None:
+            summary = await self.pool.invoke(
+                lambda: self.experiment.summarize(summarize_scores=False)
+            )
+            url: object = getattr(summary, "experiment_url", None)
+            if isinstance(url, str):
+                details["url"] = url
+            identifier: object = getattr(self.experiment, "id", None)
+            if isinstance(identifier, str):
+                details["experiment_id"] = identifier
+        return SinkReceipt("braintrust", "completed", details=details)

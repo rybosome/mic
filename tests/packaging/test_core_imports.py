@@ -34,9 +34,9 @@ from mic.reporters.html import write_report
 memory = mic.run(classify, output=output / "memory")
 file = mic.run(classify_file, output=output / "file")
 assert memory.exit_code == file.exit_code == 0
-assert memory.manifest["dataset"]["digest"] == file.manifest["dataset"]["digest"]
+assert next(iter(memory.sources.values())).digest == next(iter(file.sources.values())).digest
 assert write_report(file.output_dir, output=output / "rerendered.html").exists()
-print(json.dumps({"status": "passed", "completed": file.manifest["counts"]["completed"]}))
+print(json.dumps({"status": "passed", "completed": file.summary.trials.completed}))
 """
     result = subprocess.run(
         [sys.executable, "-I", "-S", "-c", script, str(root), str(tmp_path)],

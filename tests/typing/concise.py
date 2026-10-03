@@ -32,8 +32,8 @@ async def async_unscored(value: str) -> mic.TaskResult[int]:
 
 
 @mic.eval(dataset=rows, scorers=[])
-def contextual(ctx: mic.TaskContext[bool], value: str) -> int:
-    return len(value) if ctx.require_expected() else 0
+def contextual(ctx: mic.TaskContext, value: str) -> int:
+    return len(value) + ctx.trial
 
 
 @mic.eval(dataset=rows, scorers=[length])
@@ -76,7 +76,7 @@ def wrong_input(value: int) -> int:
 
 
 @mic.eval(dataset=rows, scorers=[])  # expect-error
-def wrong_context(ctx: mic.TaskContext[str], value: str) -> int:
+def wrong_context(ctx: mic.TaskContext[int], value: str) -> int:
     return len(value)
 
 

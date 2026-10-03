@@ -29,11 +29,11 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 | `list` | One or more modules | List definitions; no dataset reads or task calls. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
-| `run` | Evaluation selector | Execute trials/scorers and save local evidence. Optional `--json` prints the final manifest. |
+| `run` | Evaluation selector | Stream trials/scorers; `--output` opts into evidence. Optional `--json` prints the final manifest. |
 | `report` | Run directory or `run.json` | Render existing evidence as standalone HTML; no evaluation rerun. |
 
 Inspection, preflight, and runs read cloud datasets when selected. Each invocation
-loads its own snapshot; preflight does not cache data for a later run.
+reads a fresh stream; preflight does not cache data for a later run.
 
 ## Execution controls and limits
 
@@ -54,10 +54,13 @@ or prefix-selection flag.
 | `--max-rows` | `inspect`, `preflight`, `run` | 10,000 rows. |
 | `--max-bytes` | `inspect`, `preflight`, `run` | 67,108,864 bytes. |
 | `--max-record-bytes` | `inspect`, `preflight`, `run` | 1,048,576 bytes per record. |
-| `--dataset-timeout` | `inspect`, `preflight`, `run` | 60 seconds; dataset materialization deadline. |
+| `--dataset-timeout` | `inspect`, `preflight`, `run` | 60 seconds cumulative active source reading/mapping time, excluding downstream waiting. |
 
 Safety caps fail visibly instead of silently truncating the dataset. Use
-`inspect --limit N` when you intentionally want to inspect only a prefix.
+`inspect --limit N` to select a prefix (default: 20 records).
+`run --on-invalid skip` skips recognized row mapping/schema errors; default `abort`
+stops admission. Transport/iterator errors and caps always fail. Previously admitted
+trials finish; an empty or all-rejected evaluation fails.
 See [provider limits](providers.md#shared-limits-and-identity) for raw and
 normalized size accounting.
 
@@ -73,21 +76,22 @@ With the README's `accuracy` and `bug_recall` scorers attached:
 ```console
 mic run ticket_eval:classify \
   --trials 5 \
-  --require 'accuracy>=0.9' \
-  --require 'bug_recall>=0.95'
+  --require 'tasks["classify"].scores["accuracy"].mean>=0.9' \
+  --require 'tasks["classify"].scores["bug_recall"].min>=0.95'
 ```
 
 - Repeat `--require` to add conditions; all must pass. Quote expressions so the
   shell does not interpret `<` or `>` as redirection.
-- Expressions use a declared scorer's name, one of `>=`, `>`, `<=`, `<`, `==`,
+- Expressions use an explicit summary path, one of `>=`, `>`, `<=`, `<`, `==`, `!=`,
   and a finite numeric threshold. For a lower-is-better metric, use `<=` or `<`.
-- Each comparison uses the metric's mean over available numeric scores across
-  cases and trials. `None` is excluded, not scored as zero. A metric with no
-  numeric scores fails its gate.
+- Choose a score's `.count`, `.mean`, `.min`, or `.max`, or use trial counters
+  and timing statistics, e.g. `trials.task_failed == 0` or
+  `tasks["classify"].trials.task_ms.max <= 2000`. `None` scores are excluded,
+  not scored as zero. A missing observation fails even a `!=` comparison.
 - Invalid expressions and undeclared metrics are configuration errors. There are
   no boolean expressions, per-case gates, percentile gates, or baseline comparisons.
 - Gate failure does not convert a completed trial into an execution failure.
-  Evidence records each gate's expression, actual mean, and pass/fail result.
+  Evidence records each gate's expression, actual value, and pass/fail result.
   Execution failures still make the run fail even if its score gates pass.
 
 Thresholds above are illustrative, not recommendations for your application.
@@ -103,8 +107,8 @@ mic report .mic/tickets-v2/run.json --output ticket-report.html
 ```
 
 An explicit run output directory must be empty (or not yet exist). Omit
-`--output` for a unique directory under `.mic`. Runs produce local JSON/JSONL
-evidence and an HTML report; `report` can regenerate HTML without model calls.
+`--output` to write no files. With it, runs record `events.jsonl` and `run.json`;
+`report` explicitly generates HTML without model calls.
 `report --output` chooses the HTML destination, not a new run directory.
 
 `run --json` prints the complete final manifest instead of the human summary.
@@ -121,12 +125,12 @@ mic run ticket_eval:classify \
   --braintrust-experiment ticket-classifier-v2
 ```
 
-This opts into a remote write after local evidence is finalized. It requires the
+This opts into remote writes as trials complete. Local recording is independent
+and opt-in; use `--output` as well when you want a local copy. It requires the
 Braintrust extra, credentials, and your intended project. Optional
 `--braintrust-app-url` and `--braintrust-org` configure the destination; these
 options and `--braintrust-experiment` require `--braintrust-project`.
-Preflight accepts the same reporter options to validate configuration without
-exporting a run. See [reporting setup and sensitive evidence](reporting.md).
+See [reporting setup and sensitive evidence](reporting.md).
 
 ## Exit codes and help
 
@@ -143,5 +147,7 @@ mic run --help
 mic inspect --help
 ```
 
-Inputs, outputs, and errors are not automatically redacted. Review saved evidence
+Inputs, outputs, metadata, and scores are not automatically redacted.
+Exception messages in persisted failure records are generic; original SDK bodies
+and tracebacks are not captured. Review saved evidence
 and destination settings before sharing or exporting a run.

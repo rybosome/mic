@@ -1,38 +1,51 @@
-"""Public run/preflight implementation and the local evidence lifecycle."""
+"""Bounded streaming execution with online summaries and opt-in event sinks."""
 
 import asyncio
-import time
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal
 
-from .._async import run_sync
+from .._async import drain, run_sync
 from ..errors import ConfigurationError, DatasetError
-from ..models import Evaluation, JsonObject, ReadLimits, RunResult
-from ..reporters.base import Reporter
-from .artifacts import (
-    atomic_json,
-    case_errors,
-    code_provenance,
-    end_run,
-    failure,
-    finish_artifacts,
-    has_artifact_failure,
-    prepare_directory,
-    write_dataset,
-)
-from .batch import execute
-from .materialization import load_dataset
-from .options import check_cases, resolve_options
-from .reporting import export_results, prepare_reporters
-from .summary import evaluate_gates, parse_gates, summarize
-from .validation import describe
+from ..models import Evaluation, JsonObject, ReadLimits
+from ..results import EvaluationOutcome, Failure, RunInfo, RunResult, SinkReceipt, failure, to_json
+from ..sinks.base import CaseAccepted, RecordRejected, ResultSink, SourceFinished, TrialFinished
+from .aggregation import Aggregator
+from .callbacks import CallbackPool
+from .case import cancelled_case, observation, run_case
+from .contracts import Case
+from .datasets import DatasetReader, describe_dataset
+from .delivery import Delivery
+from .files import atomic_write
+from .options import Options, resolve_options
+from .provenance import code_provenance
+from .recorder import JsonlSink
+from .requirements import parse_requirements
+from .validation import describe, dumps, nonempty
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+@dataclass(frozen=True)
+class _Job[I, E, M]:
+    row_index: int
+    trial: int
+    case: Case[I, E, M]
+    encoded: JsonObject
+
+
+def _configuration[I, O, E, M](
+    spec: Evaluation[I, O, E, M],
+    options: Options,
+) -> JsonObject:
+    return {
+        "dataset": describe_dataset(spec.dataset),
+        "output": describe(spec.output, "output"),
+        "options": options.as_json(),
+        "scores": [scorer.name for scorer in spec.scorers],
+        "provenance": code_provenance(spec.function),
+    }
 
 
 async def apreflight[I, O, E, M](
@@ -42,27 +55,39 @@ async def apreflight[I, O, E, M](
     concurrency: int | None = None,
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
-    reporters: Sequence[Reporter] = (),
 ) -> JsonObject:
     options = resolve_options(
-        spec,
-        trials=trials,
-        concurrency=concurrency,
-        timeout=None,
-        max_executions=max_executions,
+        spec, trials=trials, concurrency=concurrency, timeout=None, max_executions=max_executions
     )
-    output_schema = describe(spec.output, "output")
-    await prepare_reporters(reporters)
-    snapshot = await load_dataset(spec.dataset, limits=limits)
-    check_cases(spec, snapshot, options)
+    _configuration(spec, options)
+    reader = DatasetReader(
+        spec.dataset,
+        "preflight",
+        limits or ReadLimits(),
+        require_expected=any(s.requires_expected for s in spec.scorers),
+    )
+    iterator = reader.rows()
+    executions = 0
+    try:
+        async for item in iterator:
+            if len(item) == 2:
+                raise DatasetError("Malformed dataset record")
+            executions += options.trials
+            if executions > max_executions:
+                raise DatasetError(f"Dataset exceeds max_executions={max_executions}")
+    except (ConfigurationError, DatasetError):
+        raise
+    except Exception as exc:
+        raise DatasetError(f"Source validation failed ({type(exc).__name__})") from None
+    finally:
+        await iterator.aclose()
+    if executions == 0:
+        raise DatasetError("Dataset contains no valid trials")
     return {
         "name": spec.name,
         "status": "ready",
-        "dataset": snapshot.summary,
-        "executions": len(snapshot.cases) * options.trials,
-        "options": options.as_json(),
-        "output_schema": output_schema,
-        "reporters": [r.name for r in reporters],
+        "dataset": to_json(reader.summary()),
+        "executions": executions,
         "tasks_executed": 0,
     }
 
@@ -74,7 +99,6 @@ def preflight[I, O, E, M](
     concurrency: int | None = None,
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
-    reporters: Sequence[Reporter] = (),
 ) -> JsonObject:
     return run_sync(
         "mic.preflight()",
@@ -85,7 +109,6 @@ def preflight[I, O, E, M](
             concurrency=concurrency,
             limits=limits,
             max_executions=max_executions,
-            reporters=reporters,
         ),
     )
 
@@ -97,150 +120,248 @@ async def arun[I, O, E, M](
     trials: int | None = None,
     concurrency: int | None = None,
     require: Sequence[str] = (),
-    reporters: Sequence[Reporter] = (),
+    sinks: Sequence[ResultSink] = (),
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
     timeout: float | None = None,
+    on_invalid: Literal["abort", "skip"] = "abort",
 ) -> RunResult:
-    """Run once and persist proof. Setup errors raise; case/report/gate failures return results.
+    """Stream once; no files without output=. Cancellation drains then re-raises."""
+    options = resolve_options(
+        spec, trials=trials, concurrency=concurrency, timeout=timeout, max_executions=max_executions
+    )
+    config = _configuration(spec, options)
+    metrics = {spec.name: [s.name for s in spec.scorers]}
+    requirements = parse_requirements(require, metrics)
+    if on_invalid not in ("abort", "skip"):
+        raise ConfigurationError("on_invalid must be 'abort' or 'skip'")
+    destination = Path(output).expanduser().resolve() if output is not None else None
+    recorder = JsonlSink(destination) if destination is not None else None
+    selected_sinks: list[ResultSink] = [recorder] if recorder is not None else []
+    selected_sinks.extend(sinks)
+    names: set[str] = set()
+    for sink in selected_sinks:
+        name = nonempty("sink name", sink.name)
+        if name in names:
+            raise ConfigurationError(f"Duplicate sink name {name!r}")
+        names.add(name)
+    if (
+        destination is not None
+        and destination.exists()
+        and (not destination.is_dir() or any(destination.iterdir()))
+    ):
+        raise ConfigurationError(f"Output directory must be empty: {destination}")
 
-    Cancellation preserves partial evidence and is re-raised after cleanup. Sync
-    callbacks must finish cooperatively; Python cannot terminate their threads.
-    """
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:10]
-    destination = (
-        (Path(output) if output is not None else Path(".mic/runs") / run_id).expanduser().resolve()
+    run_id = uuid.uuid4().hex
+    info = RunInfo(run_id, datetime.now(UTC).isoformat(), {spec.name: config})
+    source_id = f"{run_id}:s0"
+    reader = DatasetReader(
+        spec.dataset,
+        source_id,
+        limits or ReadLimits(),
+        on_invalid=on_invalid,
+        require_expected=any(s.requires_expected for s in spec.scorers),
     )
-    started = time.perf_counter()
-    manifest: JsonObject = {
-        "schema_version": "mic-run-v2",
-        "run_id": run_id,
-        "name": spec.name,
-        "status": "running",
-        "started_at": _now(),
-        "ended_at": None,
-        "duration_ms": 0,
-        "dataset": {"name": spec.dataset.name, "rows": 0},
-        "options": {},
-        "counts": {"planned": 0, "completed": 0, "failed": 0, "cancelled": 0},
-        "scores": {},
-        "latency": {},
-        "failures": [],
-        "gates": [],
-        "reporting": {},
-        "artifacts": {"dataset": "dataset.jsonl", "cases": "cases.jsonl", "report": "report.html"},
-        "provenance": {},
-        "exit_code": 0,
-    }
-    cases: list[JsonObject] = []
-    planned = 0
-    admitted = False
-    try:
-        prepare_directory(destination)
-        admitted = True
-        (destination / "cases.jsonl").touch()
-        (destination / "dataset.jsonl").touch()
-        manifest["provenance"] = code_provenance(spec.function)
-        atomic_json(destination / "run.json", manifest)
-        options = resolve_options(
-            spec,
-            trials=trials,
-            concurrency=concurrency,
-            timeout=timeout,
-            max_executions=max_executions,
+    aggregate = Aggregator(metrics)
+    delivery = Delivery()
+    pool = CallbackPool(options.concurrency)
+    jobs: asyncio.Queue[_Job[I, E, M] | None] = asyncio.Queue(maxsize=options.concurrency)
+    interrupted: asyncio.CancelledError | None = None
+    failures: list[Failure] = []
+    admitted = 0
+
+    async def join[T](pending: asyncio.Future[T]) -> T:
+        nonlocal interrupted
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError as exc:
+            interrupted = exc
+            return await drain(pending)
+
+    async def publish(job: _Job[I, E, M], result: JsonObject) -> None:
+        aggregate.observe(spec.name, observation(result))
+        await delivery.write(
+            TrialFinished(
+                spec.name,
+                source_id,
+                job.row_index,
+                job.trial,
+                job.case.id,
+                result,
+            )
         )
-        gates = parse_gates(spec, require)
-        manifest["options"] = options.as_json()
-        manifest["output_schema"] = describe(spec.output, "output")
-        await prepare_reporters(reporters)
-        snapshot = await load_dataset(spec.dataset, limits=limits)
-        manifest["dataset"] = snapshot.summary
-        write_dataset(destination / "dataset.jsonl", snapshot.rows)
-        check_cases(spec, snapshot, options)
-        planned = len(snapshot.cases) * options.trials
-        manifest["counts"] = {
-            "planned": planned,
-            "completed": 0,
-            "failed": 0,
-            "cancelled": 0,
-        }
-        atomic_json(destination / "run.json", manifest)
-    except (ConfigurationError, DatasetError) as exc:
-        if not admitted:
-            # A refused destination belongs to someone else; never write a report into it.
+
+    async def producer() -> None:
+        nonlocal admitted
+        iterator = reader.rows()
+        cancelled = False
+        try:
+            async for item in iterator:
+                if delivery.failed:
+                    break
+                if len(item) == 2:
+                    index, error = item
+                    await delivery.write(RecordRejected(source_id, index, error))
+                    continue
+                index, case, normalized = item
+                await delivery.write(CaseAccepted(source_id, index, case.id, normalized))
+                for trial in range(1, options.trials + 1):
+                    if delivery.failed:
+                        break
+                    if admitted >= options.max_executions:
+                        raise DatasetError(f"Run exceeds max_executions={options.max_executions}")
+                    await jobs.put(_Job(index, trial, case, normalized))
+                    aggregate.admit(spec.name)
+                    admitted += 1
+                if delivery.failed:
+                    break
+        except asyncio.CancelledError:
+            cancelled = True
             raise
-        manifest.update(
-            {
-                "status": "failed",
-                "exit_code": 2,
-                "failures": [
-                    failure("dataset" if isinstance(exc, DatasetError) else "configuration", exc)
-                ],
-            }
-        )
-        persisted = finish_artifacts(destination, manifest, cases, started=started)
-        persisted.annotate(exc, destination)
-        raise
+        except Exception as exc:
+            reader.error = failure("source", exc)
+        finally:
+            try:
+                await iterator.aclose()
+            except Exception as exc:
+                reader.error = failure("source_close", exc)
+            await delivery.write(SourceFinished(source_id, reader.summary()))
+            if not cancelled:
+                for _ in range(options.concurrency):
+                    await jobs.put(None)
+
+    async def worker() -> None:
+        while (job := await jobs.get()) is not None:
+            try:
+                try:
+                    result = await run_case(
+                        spec,
+                        job.case,
+                        job.encoded,
+                        job.row_index,
+                        job.trial,
+                        options,
+                        pool,
+                    )
+                except asyncio.CancelledError:
+                    result = cancelled_case(job.case.id, job.row_index, job.trial, job.encoded)
+                await publish(job, result)
+                if result["status"] == "cancelled":
+                    raise asyncio.CancelledError()
+            finally:
+                jobs.task_done()
+
+    workers: list[asyncio.Task[None]] = []
+    try:
+        await delivery.open(selected_sinks, info)
+        if not delivery.failed:
+            workers = [asyncio.create_task(producer())]
+            workers.extend(asyncio.create_task(worker()) for _ in range(options.concurrency))
+            await asyncio.gather(*workers)
     except asyncio.CancelledError as exc:
-        manifest.update(
-            {
-                "status": "cancelled",
-                "exit_code": 130,
-                "failures": [failure("cancelled", exc)],
-            }
-        )
-        persisted = finish_artifacts(destination, manifest, cases, started=started)
-        persisted.annotate(exc, destination)
-        raise
-    except OSError as exc:
-        manifest.update(
-            {
-                "status": "failed",
-                "exit_code": 1,
-                "failures": [failure("artifact", exc)],
-            }
-        )
-        if admitted:
-            finish_artifacts(destination, manifest, cases, started=started)
-        else:
-            # Failure to check/acquire the directory does not authorize replacing
-            # files that may already exist there.
-            end_run(manifest, started=started)
-        return RunResult(manifest, cases, destination, 1)
-    batch = await execute(spec, snapshot, options, destination)
-    cases, interrupted, runtime_error = batch.cases, batch.interrupted, batch.error
-    summarize(
-        spec,
-        manifest,
-        cases,
-        planned,
-        cancelled=interrupted is not None or runtime_error is not None,
-    )
-    manifest["failures"] = case_errors(cases)
-    if runtime_error is not None:
-        manifest["failures"].append(failure("artifact", runtime_error))
-    quality_pass = evaluate_gates(manifest, gates)
+        interrupted = exc
+    except Exception as exc:
+        failures.append(failure("runtime", exc))
+    finally:
+        for pending in workers:
+            if not pending.done():
+                pending.cancel()
+        if workers:
+            await join(asyncio.gather(*workers, return_exceptions=True))
+        while not jobs.empty():
+            job = jobs.get_nowait()
+            if job is not None:
+                await join(
+                    asyncio.create_task(
+                        publish(
+                            job,
+                            cancelled_case(
+                                job.case.id,
+                                job.row_index,
+                                job.trial,
+                                job.encoded,
+                            ),
+                        )
+                    )
+                )
+        await join(asyncio.create_task(pool.close()))
+
+    summary = aggregate.snapshot()
+    outcomes = tuple(requirement.evaluate(summary) for requirement in requirements)
+    if summary.trials.planned == 0 and interrupted is None:
+        failures.append(Failure("execution", "EmptyEvaluation", "No valid trials were admitted"))
     exit_code = (
-        130 if interrupted is not None else (1 if manifest["failures"] or not quality_pass else 0)
+        130
+        if interrupted is not None
+        else 2
+        if reader.error is not None
+        else 1
+        if failures
+        or summary.trials.task_failed
+        or summary.trials.scoring_failed
+        or not all(r.passed for r in outcomes)
+        or delivery.failed
+        else 0
     )
-    manifest.update(
-        {
-            "status": "cancelled"
-            if interrupted is not None
-            else "failed"
-            if exit_code
-            else "completed",
-            "exit_code": exit_code,
-        }
+    outcome = EvaluationOutcome(
+        run_id,
+        "cancelled" if interrupted is not None else "failed" if exit_code else "completed",
+        exit_code,
+        summary,
+        {source_id: reader.summary()},
+        outcomes,
+        tuple(failures),
     )
-    persisted = finish_artifacts(destination, manifest, cases, started=started)
+    finishing = asyncio.create_task(delivery.finish(outcome))
+    try:
+        receipts = await asyncio.shield(finishing)
+    except asyncio.CancelledError as exc:
+        interrupted = exc
+        finishing.cancel()
+        receipts = await drain(finishing)
+        outcome = replace(outcome, status="cancelled", exit_code=130)
+    if any(receipt.status == "cancelled" for receipt in receipts):
+        interrupted = interrupted or asyncio.CancelledError()
+        outcome = replace(outcome, status="cancelled", exit_code=130)
+    if any(receipt.status != "completed" for receipt in receipts) and outcome.exit_code == 0:
+        outcome = replace(outcome, status="failed", exit_code=1)
+    result = RunResult(
+        outcome.run_id,
+        outcome.status,
+        outcome.exit_code,
+        outcome.summary,
+        outcome.sources,
+        outcome.requirements,
+        outcome.failures,
+        receipts,
+        destination,
+        info,
+    )
+    # Publish only into an acquired recorder directory, after every sink settled.
+    if destination is not None and recorder is not None and recorder.acquired:
+        result = _publish_result(destination, result)
     if interrupted is not None:
-        persisted.annotate(interrupted, destination)
+        interrupted.add_note(
+            f"Mic run {run_id} cancelled; admitted work and sinks have been joined."
+        )
         raise interrupted
-    if not has_artifact_failure(manifest):
-        await export_results(reporters, manifest, cases, destination, started=started)
-    exit_code = cast(int, manifest["exit_code"])
-    return RunResult(manifest, cases, destination, exit_code)
+    return result
+
+
+def _publish_result(destination: Path, result: RunResult) -> RunResult:
+    for _ in range(2):
+        try:
+            atomic_write(destination / "run.json", (dumps(result.to_json()) + "\n",))
+            return result
+        except Exception as exc:
+            receipt = SinkReceipt("manifest", "failed", error=failure("manifest", exc))
+            result = replace(
+                result,
+                status="cancelled" if result.exit_code == 130 else "failed",
+                exit_code=result.exit_code or 1,
+                sinks=tuple(s for s in result.sinks if s.name != "manifest") + (receipt,),
+            )
+    return result
 
 
 def run[I, O, E, M](
@@ -250,10 +371,11 @@ def run[I, O, E, M](
     trials: int | None = None,
     concurrency: int | None = None,
     require: Sequence[str] = (),
-    reporters: Sequence[Reporter] = (),
+    sinks: Sequence[ResultSink] = (),
     limits: ReadLimits | None = None,
     max_executions: int = 50_000,
     timeout: float | None = None,
+    on_invalid: Literal["abort", "skip"] = "abort",
 ) -> RunResult:
     return run_sync(
         "mic.run()",
@@ -264,9 +386,10 @@ def run[I, O, E, M](
             trials=trials,
             concurrency=concurrency,
             require=require,
-            reporters=reporters,
+            sinks=sinks,
             limits=limits,
             max_executions=max_executions,
             timeout=timeout,
+            on_invalid=on_invalid,
         ),
     )

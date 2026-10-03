@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import mic
-from mic._runtime.materialization import load_dataset
+from tests.datasets.helpers import collect_dataset
 
 
 async def test_provider_digest_does_not_change_fallback_case_identity():
@@ -31,8 +31,8 @@ async def test_provider_digest_does_not_change_fallback_case_identity():
     def memory():
         return [{"input": 1, "expected": 2}]
 
-    provider = await load_dataset(custom)
-    local = await load_dataset(memory)
+    provider = await collect_dataset(custom)
+    local = await collect_dataset(memory)
     assert provider.rows == local.rows
     assert provider.summary["digest"] == local.summary["digest"]
 
@@ -70,7 +70,7 @@ async def test_repeated_cancel_drains_source_factory_and_its_close(tmp_path: Pat
         return value
 
     pending = (
-        load_dataset(source)
+        collect_dataset(source)
         if entrypoint == "materializer"
         else mic.arun(identity, output=tmp_path)
     )
@@ -98,7 +98,5 @@ async def test_repeated_cancel_drains_source_factory_and_its_close(tmp_path: Pat
         manifest = json.loads((tmp_path / "run.json").read_text(encoding="utf-8"))
         assert manifest["status"] == "cancelled"
         assert manifest["exit_code"] == 130
-        assert manifest["counts"]["planned"] == 0
-        assert manifest["failures"][0]["phase"] == "cancelled"
-        assert (tmp_path / "cases.jsonl").read_text(encoding="utf-8") == ""
-        assert (tmp_path / "report.html").is_file()
+        assert manifest["summary"]["trials"]["planned"] == 0
+        assert (tmp_path / "events.jsonl").is_file()

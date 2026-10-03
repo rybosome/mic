@@ -1,36 +1,29 @@
-"""Evaluation artifacts behavior through the real runner."""
+"""Explicit evidence and sink failure behavior through the real runner."""
 
 import pytest
 
 import mic
 
-from .helpers import evaluation, manifest, row
+from .helpers import cases, evaluation, manifest, row
+from .test_streaming import Capture
 
 
-def test_reporter_failure_keeps_results_and_does_not_repeat_tasks(tmp_path):
+def test_sink_failure_keeps_results_and_does_not_repeat_tasks(tmp_path):
     calls = []
 
-    class BrokenReporter:
-        name = "broken"
-
-        async def prepare(self):
-            pass
-
-        async def report(self, manifest, cases):
-            assert (tmp_path / "run.json").exists()
-            assert len(cases) == 1
-            raise RuntimeError("simulated upload failure")
+    class Broken(Capture):
+        async def finish(self, outcome):
+            raise RuntimeError("private response")
 
     result = mic.run(
-        evaluation([row()], task=lambda _ctx, value: calls.append(1) or value),
+        evaluation([row()], task=lambda value: calls.append(1) or value),
         output=tmp_path,
-        reporters=[BrokenReporter()],
+        sinks=[Broken()],
     )
-    assert calls == [1]
-    assert result.exit_code == 1
-    assert result.cases[0]["status"] == "completed"
-    assert manifest(tmp_path)["reporting"]["broken"]["status"] == "failed"
-    assert "simulated upload failure" in (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert calls == [1] and result.exit_code == 1
+    assert cases(result)[0]["status"] == "completed"
+    assert manifest(tmp_path)["sinks"][-1]["status"] == "failed"
+    assert not (tmp_path / "report.html").exists()
 
 
 def test_existing_evidence_is_never_overwritten(tmp_path):

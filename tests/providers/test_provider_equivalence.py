@@ -7,7 +7,6 @@ from enum import Enum
 import httpx
 import pytest
 
-from mic._runtime.materialization import load_dataset
 from mic.decorators import case_schema, dataset
 from mic.errors import DatasetError
 from mic.models import ReadLimits
@@ -15,6 +14,7 @@ from mic.providers.bigquery import BigQueryHandle
 from mic.providers.braintrust import BraintrustHandle
 from mic.providers.files import FileHandle
 from mic.sources import DatasetSource
+from tests.datasets.helpers import collect_dataset
 
 ROWS = [
     {"id": "case-001", "input": "nested text", "expected": "label", "metadata": {"team": "x"}},
@@ -95,8 +95,8 @@ async def test_all_builtin_sources_have_identical_normalized_snapshot(tmp_path):
             name="same",
             schema=case_schema(input=str, expected=str | None, expected_policy="optional"),
         )(lambda: source)
-        snapshots.append(await load_dataset(descriptor))
-    assert all(snapshot.rows == ROWS for snapshot in snapshots)
+        snapshots.append(await collect_dataset(descriptor))
+    assert all(logical(snapshot.rows) == logical(ROWS) for snapshot in snapshots)
     assert len({snapshot.summary["digest"] for snapshot in snapshots}) == 1
     assert snapshots[1].cases[0].provenance["line"] == 1
     assert snapshots[3].cases[0].provenance["record_id"] == "case-001"
@@ -104,13 +104,14 @@ async def test_all_builtin_sources_have_identical_normalized_snapshot(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["memory", "file", "bigquery", "braintrust"])
-async def test_every_source_rejects_duplicate_identity_before_execution(kind, tmp_path):
+async def test_every_source_preserves_labels_but_generates_distinct_identities(kind, tmp_path):
     source = source_fixture(kind, [ROWS[0], ROWS[0]], tmp_path)
     descriptor = dataset(name="duplicate", schema=case_schema(input=str, expected=str))(
         lambda: source
     )
-    with pytest.raises(DatasetError, match="Duplicate case id"):
-        await load_dataset(descriptor)
+    result = await collect_dataset(descriptor)
+    assert len({case.id for case in result.cases}) == 2
+    assert result.rows[0]["label"] == result.rows[1]["label"]
 
 
 @pytest.mark.asyncio
@@ -127,8 +128,8 @@ async def test_fifth_source_needs_no_registration_or_core_change():
         name="custom",
         schema=case_schema(input=str, expected=str | None, expected_policy="optional"),
     )(lambda: FixtureHandle())
-    result = await load_dataset(descriptor, limits=ReadLimits())
-    assert result.rows == ROWS
+    result = await collect_dataset(descriptor, limits=ReadLimits())
+    assert logical(result.rows) == logical(ROWS)
 
 
 class NativeMode(str, Enum):
@@ -175,14 +176,14 @@ async def test_nested_native_dataclass_shapes_have_equal_digest_across_all_sourc
                 expected=dict[str, int],
             ),
         )(lambda: source)
-        snapshot = await load_dataset(descriptor)
+        snapshot = await collect_dataset(descriptor)
         assert snapshot.cases[0].input == NativePayload(
             [NativeEntry("one", 2)],
             ("a", "b"),
             NativeMode.FAST,
             None,
         )
-        assert snapshot.rows == rows
+        assert logical(snapshot.rows) == logical(rows)
         snapshots.append(snapshot)
     assert len({snapshot.summary["digest"] for snapshot in snapshots}) == 1
 
@@ -210,5 +211,12 @@ async def test_nested_native_schema_failure_has_field_path_for_every_source(kind
             expected=str,
         ),
     )(lambda: source)
-    with pytest.raises(DatasetError, match=r"entries\[0\].count"):
-        await load_dataset(descriptor)
+    with pytest.raises(DatasetError, match="SchemaError"):
+        await collect_dataset(descriptor)
+
+
+def logical(rows):
+    return [
+        {key: value for key, value in row.items() if key not in ("id", "label", "provenance")}
+        for row in rows
+    ]

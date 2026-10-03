@@ -3,9 +3,8 @@
 import math
 from dataclasses import dataclass
 
-from ..errors import ConfigurationError, DatasetError
-from ..models import Evaluation, JsonObject, Missing
-from .materialization import DatasetSnapshot
+from ..errors import ConfigurationError
+from ..models import Evaluation, JsonObject
 from .validation import nonempty, positive_integer
 
 
@@ -55,22 +54,3 @@ def resolve_options[I, O, E, M](
         timeout,
         positive_integer("max_executions", max_executions),
     )
-
-
-def check_cases[I, O, E, M](
-    spec: Evaluation[I, O, E, M],
-    snapshot: DatasetSnapshot[I, E, M],
-    options: Options,
-) -> None:
-    executions = len(snapshot.cases) * options.trials
-    if executions > options.max_executions:
-        raise ConfigurationError(
-            f"{executions} executions exceed max_executions={options.max_executions}"
-        )
-    needed = [scorer.name for scorer in spec.scorers if scorer.requires_expected]
-    if needed:
-        for row in snapshot.cases:
-            if isinstance(row.expected, Missing):
-                raise DatasetError(
-                    f"Case {row.id!r} is unlabeled, but scorers {needed!r} require expected"
-                )

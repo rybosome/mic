@@ -4,7 +4,7 @@
 
 Typed evaluations for LLMs, agents, and other nondeterministic systems. Define
 your cases, scoring functions, and application call; Mic runs repeated trials
-and saves inspectable results locally.
+and streams results with optional local evidence.
 
 ## Install
 
@@ -311,7 +311,7 @@ and add the logging call before its existing body. Keep its decorator unchanged:
 
 <!-- snippet: task-context -->
 ```python
-async def classify(ctx: mic.TaskContext[Classification], ticket: Ticket) -> Classification:
+async def classify(ctx: mic.TaskContext, ticket: Ticket) -> Classification:
     import logging
 
     logging.getLogger(__name__).info("case=%s trial=%s", ctx.case_id, ctx.trial)
@@ -362,15 +362,14 @@ With both scorers from the preceding section attached:
 ```console
 mic run ticket_eval:classify \
   --trials 5 \
-  --require 'accuracy>=0.9' \
-  --require 'bug_recall>=0.95'
+  --require 'tasks["classify"].scores["accuracy"].mean>=0.9' \
+  --require 'tasks["classify"].scores["bug_recall"].mean>=0.95'
 ```
 
-Each `--require` compares a scorer's mean across numeric results, excluding `None`.
-All requirements must pass; supported comparisons are `>=`, `>`, `<=`, `<`, and
-`==`. A failed requirement exits nonzero for CI, while preserving saved evidence.
-These are aggregate thresholds, not per-case assertions or comparisons with a
-previous run. See [quality gates](docs/cli.md#quality-gates) for full semantics.
+Select `.mean`, `.min`, `.max`, or `.count` explicitly. You can also require
+`trials.task_failed == 0` or `trials.task_ms.max <= 2000`.
+All requirements must pass; comparisons support `>=`, `>`, `<=`, `<`, `==`, and `!=`.
+Missing numeric observations fail the requirement. See [quality gates](docs/cli.md#quality-gates) for full semantics.
 
 ### Inspect or automate the results
 
@@ -382,7 +381,7 @@ mic report .mic/tickets-v2 --open
 mic run ticket_eval:classify --json
 ```
 
-For all six commands, including BigQuery cost estimation, see the
+For all commands, see the
 [CLI reference](docs/cli.md), or explore the built-in help:
 
 ```console
@@ -404,10 +403,9 @@ result = mic.run(
     trials=5,
     concurrency=2,
     timeout=30,
-    require=["accuracy>=0.9"],
+    require=['tasks["classify"].scores["accuracy"].mean>=0.9'],
 )
-print(result.manifest["scores"])
-print(result.output_dir)
+print(result.summary.tasks["classify"].scores)
 raise SystemExit(result.exit_code)
 ```
 
@@ -418,17 +416,20 @@ In a notebook or async application with an active event loop, use `mic.arun()`:
 import mic
 from ticket_eval import classify
 
-result = await mic.arun(classify, trials=5, concurrency=2, require=["accuracy>=0.9"])
-result.manifest["scores"]
+result = await mic.arun(classify, trials=5, concurrency=2, require=['tasks["classify"].scores["accuracy"].mean>=0.9'])
+result.summary.tasks["classify"].scores
 ```
 
-Either runner supports sync and async tasks.
+Either runner supports sync and async tasks. No files are written by default;
+add `output=".mic/tickets"` to record events and a final summary. Records are
+validated and task/scorer work is pipelined as the source is read. Use
+`on_invalid="skip"` (CLI: `--on-invalid skip`) to skip malformed records.
 See the [Python execution API](docs/api.md#execution-and-errors) for all options.
 
 ## Notes and documentation
 
 - **Early release:** the API may change before a stable release.
-- **Sensitive evidence:** inputs, outputs, and errors are not automatically redacted.
+- **Sensitive evidence:** recorded inputs, outputs, metadata, and scores may contain private data.
   Review artifacts before sharing them.
 
 [Artifacts](docs/artifacts.md) · [Optional Braintrust reporting](docs/reporting.md) ·

@@ -5,12 +5,14 @@ import inspect
 import json
 import threading
 import time
-from collections.abc import Coroutine, Sequence
+from collections.abc import Coroutine
 from pathlib import Path
 
 import pytest
 
 import mic
+
+from .test_streaming import Capture
 
 
 @mic.dataset(name="cancellation-fixtures", schema=mic.case_schema(input=int, expected=int))
@@ -24,7 +26,9 @@ def read_manifest(path: Path):
 
 def read_cases(path: Path):
     return [
-        json.loads(line) for line in (path / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+        event["result"]
+        for line in (path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if (event := json.loads(line))["type"] == "trial_finished"
     ]
 
 
@@ -33,15 +37,10 @@ async def test_reporter_cancellation_saves_truthful_upload_outcome(tmp_path: Pat
     task_calls: list[int] = []
     reporter_cleanup: list[bool] = []
 
-    class SlowReporter:
+    class SlowReporter(Capture):
         name = "slow"
 
-        async def prepare(self) -> None:
-            pass
-
-        async def report(
-            self, manifest: mic.JsonObject, cases: Sequence[mic.JsonObject]
-        ) -> mic.JsonObject:
+        async def finish(self, outcome):
             entered.set()
             try:
                 await asyncio.Event().wait()
@@ -50,11 +49,11 @@ async def test_reporter_cancellation_saves_truthful_upload_outcome(tmp_path: Pat
             return {"status": "completed"}
 
     @mic.eval(name="reporter-cancellation", dataset=three_rows, output=int, scorers=[])
-    async def identity(ctx: mic.TaskContext[int, mic.JsonObject], value: int) -> int:
+    async def identity(ctx: mic.TaskContext[mic.JsonObject], value: int) -> int:
         task_calls.append(value)
         return value
 
-    running = asyncio.create_task(mic.arun(identity, output=tmp_path, reporters=[SlowReporter()]))
+    running = asyncio.create_task(mic.arun(identity, output=tmp_path, sinks=[SlowReporter()]))
     await asyncio.wait_for(entered.wait(), timeout=2)
     saved_before = read_cases(tmp_path)
     running.cancel()
@@ -64,14 +63,14 @@ async def test_reporter_cancellation_saves_truthful_upload_outcome(tmp_path: Pat
     saved = read_manifest(tmp_path)
     assert saved["status"] == "cancelled"
     assert saved["exit_code"] == 130
-    assert saved["reporting"]["slow"]["status"] == "cancelled"
-    assert saved["failures"][-1]["phase"] == "reporting"
-    assert saved["failures"][-1]["type"] == "CancelledError"
-    assert saved["counts"]["completed"] == 3
+    assert saved["sinks"][-1]["status"] == "cancelled"
+    assert saved["sinks"][-1]["error"]["phase"] == "sink_finish"
+    assert saved["sinks"][-1]["error"]["type"] == "CancelledError"
+    assert saved["summary"]["trials"]["completed"] == 3
     assert read_cases(tmp_path) == saved_before
     assert sorted(task_calls) == [0, 1, 2]
     assert reporter_cleanup == [True]
-    assert (tmp_path / "report.html").is_file()
+    assert (tmp_path / "events.jsonl").is_file()
 
 
 @pytest.mark.parametrize("cancel_phase", ["task", "scorer"])
@@ -93,7 +92,7 @@ async def test_callback_cancellation_accounts_for_unstarted_jobs(
         scorers=[exact],
         concurrency=1,
     )
-    async def callback(ctx: mic.TaskContext[int, mic.JsonObject], value: int) -> int:
+    async def callback(ctx: mic.TaskContext[mic.JsonObject], value: int) -> int:
         task_calls.append(value)
         if cancel_phase == "task":
             raise asyncio.CancelledError("task stopped itself")
@@ -105,19 +104,16 @@ async def test_callback_cancellation_accounts_for_unstarted_jobs(
     saved, rows = read_manifest(tmp_path), read_cases(tmp_path)
     assert saved["status"] == "cancelled"
     assert saved["exit_code"] == 130
-    assert saved["counts"] == {
-        "planned": 3,
-        "completed": 0,
-        "failed": 0,
-        "cancelled": 3,
-    }
-    assert saved["scores"]["exact"]["unavailable_count"] == 3
+    trials = saved["summary"]["trials"]
+    assert 1 <= trials["planned"] <= 2
+    assert trials["planned"] == trials["cancelled"]
+    assert trials["completed"] == trials["task_failed"] == trials["scoring_failed"] == 0
+    assert saved["summary"]["tasks"]["callback-cancellation"]["scores"]["exact"]["count"] == 0
     assert task_calls == [0]
-    assert len(rows) == 1
+    assert len(rows) == trials["planned"]
     assert rows[0]["status"] == "cancelled"
-    assert rows[0]["case_id"] == "case-0"
-    assert rows[0]["errors"][0]["type"] == "CancelledError"
-    assert (tmp_path / "report.html").is_file()
+    assert rows[0]["label"] == "case-0"
+    assert (tmp_path / "events.jsonl").is_file()
 
 
 async def test_cancelled_sync_callback_closes_its_returned_coroutine(tmp_path: Path) -> None:
@@ -139,7 +135,7 @@ async def test_cancelled_sync_callback_closes_its_returned_coroutine(tmp_path: P
         concurrency=1,
     )
     def callback(
-        ctx: mic.TaskContext[int, mic.JsonObject], value: int
+        ctx: mic.TaskContext[mic.JsonObject], value: int
     ) -> Coroutine[object, object, int]:
         loop.call_soon_threadsafe(entered.set)
         if not release.wait(timeout=2):
@@ -164,7 +160,7 @@ async def test_cancelled_sync_callback_closes_its_returned_coroutine(tmp_path: P
     assert awaited == []
     saved = read_manifest(tmp_path)
     assert saved["exit_code"] == 130
-    assert saved["counts"]["cancelled"] == 3
+    assert 1 <= saved["summary"]["trials"]["cancelled"] <= 2
 
 
 def test_timed_out_sync_callback_closes_its_returned_coroutine(tmp_path: Path) -> None:
@@ -181,7 +177,7 @@ def test_timed_out_sync_callback_closes_its_returned_coroutine(tmp_path: Path) -
 
     @mic.eval(name="mixed-callback-timeout", dataset=one_row, output=int, scorers=[])
     def callback(
-        ctx: mic.TaskContext[int, mic.JsonObject], value: int
+        ctx: mic.TaskContext[mic.JsonObject], value: int
     ) -> Coroutine[object, object, int]:
         time.sleep(0.025)
         result = response()
@@ -190,7 +186,7 @@ def test_timed_out_sync_callback_closes_its_returned_coroutine(tmp_path: Path) -
 
     result = mic.run(callback, output=tmp_path, timeout=0.001)
     assert result.exit_code == 1
-    assert result.cases[0]["errors"][0]["type"] == "TimeoutError"
+    assert read_cases(tmp_path)[0]["errors"][0]["type"] == "TimeoutError"
     assert len(returned) == 1
     assert inspect.getcoroutinestate(returned[0]) == inspect.CORO_CLOSED
     assert awaited == []
@@ -209,7 +205,7 @@ async def test_repeated_cancellation_joins_sync_worker_and_closes_late_coroutine
 
     @mic.eval(name="repeated-cancel", dataset=three_rows, output=int, scorers=[], concurrency=1)
     def callback(
-        ctx: mic.TaskContext[int, mic.JsonObject], value: int
+        ctx: mic.TaskContext[mic.JsonObject], value: int
     ) -> Coroutine[object, object, int]:
         loop.call_soon_threadsafe(entered.set)
         assert release.wait(2)
@@ -233,8 +229,8 @@ async def test_repeated_cancellation_joins_sync_worker_and_closes_late_coroutine
     saved = read_manifest(tmp_path)
     assert saved["status"] == "cancelled"
     assert saved["exit_code"] == 130
-    assert saved["counts"]["cancelled"] == 3
-    assert len(read_cases(tmp_path)) == 1
+    assert 1 <= saved["summary"]["trials"]["cancelled"] <= 2
+    assert len(read_cases(tmp_path)) == saved["summary"]["trials"]["cancelled"]
 
 
 @pytest.mark.parametrize("outcome", ["cancelled", "failed"])

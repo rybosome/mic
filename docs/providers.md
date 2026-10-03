@@ -28,9 +28,9 @@ for what is embedded in reports and sent during optional export.
 
 `ReadLimits` defaults to `max_rows=10_000`, `max_bytes=67_108_864`,
 `max_record_bytes=1_048_576`, and `timeout_seconds=60`. Exceeding a safety cap fails
-dataset loading before tasks run; it never selects an implicit prefix. `mic
+source admission; it never selects an implicit prefix. Already-admitted work finishes. `mic
 inspect ... --limit N` and `inspect_dataset(..., limit=N)` deliberately select a
-prefix. The source adapters check raw sizes where available, and the materializer
+prefix (default: 20 records). The source adapters check raw sizes where available, and the reader
 also checks the normalized, serialized case sizes.
 `inspect_dataset` is blocking; async hosts use `await ainspect_dataset(...)`.
 
@@ -41,11 +41,12 @@ with `expected_policy="optional"`. Custom mappers return `RawCase` and can map
 arbitrary source columns to that envelope. Decode source-specific JSON string
 columns explicitly in that mapper so normalization remains visible in the definition.
 
-Explicit IDs are preserved and duplicates fail loading. Default IDs for cases
-without an explicit ID derive from normalized case content and position. Snapshot
-digests include normalized inputs, expected values, metadata, and IDs, and exclude
-provider provenance. Cross-provider equality therefore needs equal logical IDs
-and ordering. Braintrust physical record IDs remain in per-case provenance even
+IDs supplied by a provider or mapper become labels; duplicate labels are allowed.
+Machine case IDs identify run/source/record occurrence, with no global uniqueness set.
+Incremental digests include ordered normalized inputs, expected values, metadata,
+and labels, excluding provider provenance and generated identity. Cross-provider
+equality therefore needs equal logical labels and ordering. Exhaustion is reported
+separately; a prefix digest does not claim completeness. Braintrust physical record IDs remain in per-case provenance even
 when a mapper supplies a separate logical ID; see
 [`examples/provider_equivalence.py`](../examples/provider_equivalence.py).
 
@@ -79,8 +80,9 @@ is either `"json"` or `"jsonl"`. JSONL is read one bounded line at a time. A JSO
 array is framed and parsed one bounded record at a time, without loading the whole array.
 
 Blank JSONL lines are skipped. Malformed JSON, duplicate object keys, nonfinite
-numbers, non-object rows, and invalid source provenance fail with file/line
-context. Custom columns are retained for mappers. Physical file path, row number,
+numbers, non-object rows, and invalid source provenance are record errors.
+Recoverable framed records can be skipped with `on_invalid="skip"`; broken
+framing aborts. Physical coordinates appear in accepted-record provenance. Custom columns are retained for mappers. Physical file path, row number,
 and JSONL line number are added to each source row's `provenance`.
 
 A complete file read records `raw_sha256`, `raw_bytes`, and
@@ -147,7 +149,7 @@ References: [QueryJobConfig](https://docs.cloud.google.com/python/docs/reference
 Install the `braintrust` extra. The source uses the pinned Braintrust SDK's owned
 HTTP session and the read-only BTQL endpoint; it never calls `init_dataset`,
 creates a dataset, or writes experiments.
-Experiment export is the independent `BraintrustReporter` integration.
+Experiment export is the independent `BraintrustSink` integration.
 
 ```python
 from mic.providers.braintrust import BraintrustHandle
@@ -296,7 +298,8 @@ iterator on exhaustion or early exit; synchronous iteration and cleanup use the
 same serialized worker thread. Async implementations must make their own blocking
 SDK calls cancellation-safe. Exceptions terminate the source; a provider which
 can recover at a record boundary may yield `mic.RecordError` with a safe message.
-The current consumer aborts on that event; the streaming runtime adds skip policy.
+The consumer aborts by default; `on_invalid="skip"` skips it. Fatal iterator
+exceptions and limits always fail.
 
 `ReadContext.limits` exposes the read caps. `set_provenance(**values)` validates
 and copies finite JSON; cumulative provenance is limited to 64 KiB. The context

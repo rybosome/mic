@@ -154,7 +154,7 @@ def dataset[I, E, M](
     expected_policy: Literal["required", "optional"] | _Unset = _UNSET,
     map_row: RowMapper | None = None,
 ) -> Callable[[SourceFactory], Dataset[I, E, M]]:
-    from ._runtime.materialization import map_envelope
+    from ._runtime.datasets import map_envelope
 
     if not isinstance(schema, _Unset):
         if any(
@@ -219,7 +219,7 @@ class _TaskDecorator[I, O, E, M](Protocol):
     def __call__(self, fn: _InputTask[I, O]) -> Evaluation[I, O, E, M]: ...
 
     @overload
-    def __call__(self, fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]: ...
+    def __call__(self, fn: Task[I, O, M]) -> Evaluation[I, O, E, M]: ...
 
 
 class _InferredTaskDecorator[I, E, M](Protocol):
@@ -227,7 +227,7 @@ class _InferredTaskDecorator[I, E, M](Protocol):
     def __call__[O](self, fn: _InputTask[I, O]) -> Evaluation[I, O, E, M]: ...
 
     @overload
-    def __call__[O](self, fn: Task[I, O, E, M]) -> Evaluation[I, O, E, M]: ...
+    def __call__[O](self, fn: Task[I, O, M]) -> Evaluation[I, O, E, M]: ...
 
 
 def _result_annotation(annotation: object) -> object:
@@ -266,7 +266,7 @@ def _inferred_output(fn: object) -> object:
         ) from exc
 
 
-def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Task[I, O, E, M]:
+def _contextual_task[I, O, M](fn: _InputTask[I, O] | Task[I, O, M]) -> Task[I, O, M]:
     try:
         parameters = tuple(inspect.signature(fn).parameters.values())
     except (TypeError, ValueError) as exc:
@@ -282,7 +282,7 @@ def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Tas
             "required keyword-only parameters are not supported"
         )
     if len(positional) == 2:
-        return cast(Task[I, O, E, M], fn)
+        return cast(Task[I, O, M], fn)
 
     input_task = cast(_InputTask[I, O], fn)
     # Normalize once, retaining provenance and the callback pool's async dispatch.
@@ -290,14 +290,14 @@ def _contextual_task[I, O, E, M](fn: _InputTask[I, O] | Task[I, O, E, M]) -> Tas
     if inspect.iscoroutinefunction(fn):
 
         @wraps(input_task)
-        async def async_task(ctx: TaskContext[E, M], value: I) -> O | TaskResult[O]:
+        async def async_task(ctx: TaskContext[M], value: I) -> O | TaskResult[O]:
             return await cast(Awaitable[O | TaskResult[O]], input_task(value))
 
         return async_task
 
     @wraps(input_task)
     def sync_task(
-        ctx: TaskContext[E, M], value: I
+        ctx: TaskContext[M], value: I
     ) -> O | TaskResult[O] | Awaitable[O | TaskResult[O]]:
         return input_task(value)
 
@@ -347,7 +347,7 @@ def eval[I, O, E, M](
     trials: int = 1,
     concurrency: int = 10,
 ) -> _TaskDecorator[I, O, E, M] | _InferredTaskDecorator[I, E, M]:
-    def decorate(fn: _InputTask[I, O] | Task[I, O, E, M]) -> Evaluation[I, O, E, M]:
+    def decorate(fn: _InputTask[I, O] | Task[I, O, M]) -> Evaluation[I, O, E, M]:
         annotation = _inferred_output(fn) if isinstance(output, _Unset) else output
         try:
             output_schema = _schema_for(cast("TypeForm[O] | Schema[O]", annotation))

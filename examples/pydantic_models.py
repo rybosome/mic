@@ -29,5 +29,5 @@ def exact(ctx: mic.ScoreContext[Request, Answer, Answer, mic.JsonObject]) -> flo
 
 
 @mic.eval(name="pydantic.double", dataset=requests, output=pydantic_schema(Answer), scorers=[exact])
-def double(ctx: mic.TaskContext[Answer, mic.JsonObject], request: Request) -> Answer:
+def double(ctx: mic.TaskContext[mic.JsonObject], request: Request) -> Answer:
     return Answer(count=request.count * 2)

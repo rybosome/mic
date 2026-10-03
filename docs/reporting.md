@@ -1,181 +1,139 @@
-# Reviewing a run
+# Results and optional evidence
 
-A run writes `run.json` (the versioned manifest), `dataset.jsonl` (the validated source
-snapshot), `cases.jsonl` (one row per trial), and a self-contained `report.html`.
-The HTML embeds the actual manifest and case rows. It requires no server, account,
-network connection, third-party fonts, or JavaScript dependencies. Open it directly
-in a normal browser. `mic report PATH` regenerates it without importing evaluation
-definitions or invoking any tasks. Regeneration writes atomically and rejects
-output paths that overlap the source manifest, dataset, or case journal, including
-symlink and hardlink aliases. A failed replacement leaves the previous report intact.
+Runs return a bounded `RunResult`; they do not retain every case or write files
+unless requested. Record and inspect a run explicitly:
 
-The case inspector provides full-text search, execution/error/unscored filters,
-case details, provenance, error tracebacks, copyable case IDs, and expandable raw
-JSON. Arrow keys move between cases and between accessible tabs. Expected values
-that are absent display **Missing**, while explicit JSON null displays **null**.
-Numeric score means exclude null and unavailable scores; an execution error and a
-zero score are different states. General finite scores are not assumed to be
-percentages. An explicit `--require 'exact>=0.9'` is what turns low quality into a
-failing process exit.
+```console
+mic run ticket_eval:classify --output .mic/tickets
+mic report .mic/tickets --open
+```
 
-Dataset strings are escaped in embedded JSON and inserted using DOM text nodes.
-A restrictive Content Security Policy permits only the report's hashed inline
-script and inline styles. It blocks network requests and outside code. Raw
-artifacts contain evaluated input/output content; they intentionally do not dump
-the process environment.
+Recording produces `run.json` and `events.jsonl`. Report generation then embeds
+the summary and recorded trial results in a standalone offline HTML file. It
+does not import evaluation definitions or rerun tasks. The viewer uses no remote
+scripts, fonts, or network calls; evidence is rendered as text and executable code
+is restricted by a content security policy.
 
-## Sensitive evidence and sharing
+Reports intentionally collect data for presentation. Default limits are 10,000
+trials and 64 MiB combined recorded input, adjustable with `mic report --max-cases`
+and `--max-bytes` or the equivalent `write_report` keyword arguments. Exceeding
+a limit fails visibly; it does not silently omit trials. Large-run analysis should
+consume the event stream directly.
 
-For field definitions and machine-readable schemas, see the [artifact contract](artifacts.md).
+## Public sink contract
 
-Treat the run directory and HTML report as copies of your evaluation data. The
-dataset snapshot contains inputs, expected values, metadata, and IDs. Case records
-add outputs, task and score metadata, source provenance, and errors. The manifest
-includes dataset provenance, code identity, and failures. Provenance can contain
-absolute local paths, SQL text and parameter values, project/dataset identifiers,
-and record IDs. Exception messages and tracebacks can include sensitive application
-text, source lines, and filesystem paths.
+Built-in and external sinks use the same protocol from `mic.sinks`:
 
-The HTML embeds the complete manifest and case records. Search filters, collapsed
-panels, and hidden fields do not remove data from the file. Offline operation and
-the Content Security Policy prevent network access and executable data injection;
-they do not redact or encrypt the report. Mic does not provide automatic redaction.
-It cannot identify every secret in arbitrary user data or exception text.
+```python
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-Sanitize sensitive inputs, metadata, SQL parameters, and exception messages before
-they enter an evaluation. Review the actual JSON and embedded HTML data before
-sharing them. Keep run directories in access-controlled storage. The repository's
-`.gitignore` excludes `.mic/`, but it does not protect custom output directories,
-copied reports, or CI artifact uploads. Temporary evidence files may also contain
-sensitive content; a filesystem fault can prevent their cleanup.
+from mic.results import EvaluationOutcome, RunInfo, SinkReceipt
+from mic.sinks import RunEvent, SinkSession, TrialFinished
 
-Enabling Braintrust export sends input/expected/output and scores, plus the full
-case record under `metadata.mic.case` and dataset information under `metadata.mic`.
-That includes case errors and provenance. Review this payload and the destination's
-access controls before enabling export. Mic does not deliberately record provider
-API keys or the process environment, but credentials placed in evaluation data or
-user-generated exception messages become part of the evidence.
+
+class Progress:
+    name = "progress"
+
+    @asynccontextmanager
+    async def open(self, run: RunInfo) -> AsyncIterator[SinkSession]:
+        yield ProgressSession()
+
+
+class ProgressSession:
+    async def write(self, event: RunEvent) -> None:
+        if isinstance(event, TrialFinished):
+            print(event.task, event.row_index, event.trial, event.result["status"])
+
+    async def finish(self, outcome: EvaluationOutcome) -> SinkReceipt:
+        return SinkReceipt("progress", "completed")
+```
+
+Pass `sinks=[Progress()]` to `run`/`arun`. Construction must be passive; acquire
+resources in `open` and release them in the context manager. Writes are awaited
+serially and apply backpressure. Do not spawn unbounded background work or keep an
+unbounded event list. For blocking operations, a sink owns and joins its worker.
+
+Events are CaseAccepted, RecordRejected, TrialFinished, and SourceFinished.
+Each sink receives independent copied data; source/score summaries are bounded.
+`finish` receives the computational outcome. It cannot know every other sink's
+future finalization result; the returned RunResult adds those receipts afterward.
+Receipt details must be a finite JSON object of at most 64 KiB.
 
 ## Persistence failures and cancellation
 
-Manifest, dataset snapshot, and report replacements use temporary files in the
-destination directory. A failed write or replacement preserves any previous
-complete destination file. These are atomic replacements of individual files,
-not a transaction across the directory or a guarantee of durability after power
-loss. The append-only case journal records completion order; an interrupted write
-can leave an incomplete last record. Report regeneration rejects malformed records.
+Opening failure prevents source/task execution and closes previously opened sinks.
+A write failure disables that sink and stops new admission; already-admitted work
+finishes, and healthy sinks still receive/finalize results. Finish/close failures
+are recorded separately and make the run fail. Sinks are never retried automatically.
 
-Terminal finalization attempts both the manifest and HTML independently. If either
-fails, Mic records artifact failures in memory and makes one recovery attempt to
-save the updated outcome. A persistent fault can leave files missing or stale,
-including a previous manifest whose status is still `running`. The returned
-`RunResult` retains computed cases and the known failures even when they cannot be
-saved. The CLI warns that evidence may be incomplete or stale rather than claiming
-a report was successfully written. A recovered write still leaves the run failed
-so callers can see that an artifact fault occurred.
+When `output=` is selected, the local recorder is first in delivery order. Its
+event file is flushed before later sinks receive each event. This does not promise
+transactional remote rollback or atomic durability across sinks.
 
-Filesystem initialization, snapshot, journal, and finalization failures produce
-exit code 1. If Mic cannot verify or create an empty output directory, it returns
-the failure in memory without attempting to write into that directory.
-Configuration/dataset setup errors keep their typed exception and
-exit code 2 even if saving the error also fails. Cancellation keeps exit code 130
-and re-raises `CancelledError` after cleanup. Error notes identify secondary
-persistence failures; they link to a report only after successful finalization.
-Terminal outcomes include elapsed duration, including setup cancellation. Duration
-is measured through the start of the latest finalization, including any completed
-reporting work, but excludes that finalization's disk-write time.
+Cancellation stops admission, accounts for admitted work, joins active threads,
+closes sources, and finalizes sinks before re-raising. Unread rows are not counted
+as cancelled trials. A synchronous SDK call cannot be forcibly stopped, including
+under repeated cancellation. Set network deadlines; an uncooperative callback or
+sink can delay shutdown indefinitely.
 
-An artifact failure prevents remote reporting from starting, even if recovery
-succeeds. After each reporter, Mic saves its outcome. If those writes fail, later
-reporters are not started. An export may already have completed remotely; the
-known outcome remains in memory, but local files may not reflect it. Artifact
-recovery never re-executes tasks or retries an export.
+Final run publication occurs after sink cleanup. An atomic replacement failure
+gets one bounded recovery attempt and a failed manifest receipt, not task replay.
+A stale `running` marker or truncated journal is possible. The returned result
+keeps known summary/receipt information, not an in-memory backup of all events.
 
-## Console and discovery
+## Sensitive evidence and sharing
 
-`mic list MODULE` imports only that selected Python module and inspects descriptors;
-it does not call dataset factories. Python import itself executes top-level code,
-so select trusted authoring modules. Exact `module:symbol` selectors avoid ambiguous
-substring selection. The invocation directory is added to the import path so local
-`examples.*` and your own modules work from the installed `mic` console command.
+Recording/export sends full values: inputs, expected answers, outputs, case/task/
+score metadata, labels, provenance, and generic error classifications. Provenance
+can include filesystem paths, SQL, parameters, dataset IDs, and query/job IDs.
+No credentials, raw exception messages, response bodies, or tracebacks are
+intentionally captured, but secrets deliberately placed in data or metadata are
+not automatically recognized or redacted.
 
-`mic inspect module:dataset --limit 3` selects an explicit prefix. Safety flags are
-`--max-rows`, `--max-bytes`, `--max-record-bytes`, `--dataset-timeout`, and (for runs)
-`--max-executions`. These are caps, not silent truncation. `mic preflight module:eval`
-validates data and configuration without task calls or experiment writes.
-`--timeout` on `run` applies to the entire trial, including task and scorers.
+Review data and destination settings before recording, uploading, or sharing.
+Treat generated HTML as a copy of the underlying evidence, not a sanitized view.
+Do not commit real evaluation artifacts or credentials.
 
 ## Optional Braintrust export
 
-Install `mic-evals[braintrust]` and set `BRAINTRUST_API_KEY`, then explicitly add
-`--braintrust-project PROJECT` to `mic run`. Optional controls are
-`--braintrust-experiment NAME`, `--braintrust-app-url URL`, and
-`--braintrust-org ORGANIZATION`. The Python equivalent is
-`BraintrustReporter(project=...)` from `mic.reporters.braintrust`.
+Install `mic-evals[braintrust]` and set `BRAINTRUST_API_KEY`:
 
-`prepare()` checks configuration, SDK availability, and credential presence locally;
-it cannot prove remote credentials or permissions. `report()` validates every score
-before initializing an experiment, uploads the already-computed results, flushes batches of at most 100 cases, and requests a metadata-only summary for the experiment URL. It creates
-a new experiment with `update=False` and never changes the SDK's current experiment.
-A configured project name may cause the SDK to create that project if absent.
+```console
+mic run ticket_eval:classify --braintrust-project your-project
+```
 
-Braintrust numeric scores must be finite and in `[0,1]`; out-of-range values fail
-export without modifying local scores. Null scores remain null. The installed SDK 0.39.0 strips top-level null
-input/output/expected fields, so its native columns cannot distinguish absent and
-explicit-null values. Each exported row's `metadata.mic.case` retains the exact full
-local case, including presence semantics, dataset/task metadata, score metadata,
-source IDs, and errors. A network-blocked memory-logger test exercises the actual
-installed SDK and verifies this representation. Export uses top-level spans because the SDK's full-event
-`Experiment.log()` rejects null input/output and incomplete failed cases. Local
-latency appears in explicit `mic_*_ms` metrics; remote span duration measures export,
-not model execution. There is no native scorer adaptation or telemetry replay.
+Python uses `BraintrustSink(project=...)` from `mic.sinks.braintrust`, passed
+through `sinks=`. Local recording remains independently opt-in. Optional CLI
+settings are `--braintrust-experiment`, `--braintrust-app-url`, and
+`--braintrust-org`; they require a project.
 
-The native reporter creates an isolated SDK `BraintrustState`, sets its owned
-logger to synchronous flush mode, and disables the SDK's queue-drop behavior.
-This is necessary because SDK 0.39.0's default background mode logs and drops
-failed requests without reliably raising them to the caller. This version-sensitive
-logger configuration is covered by local installed-SDK contract tests, including
-a fake rejected HTTP upload that must raise. It does not modify the process's
-current experiment or default logger. Keep the SDK pinned until this boundary is
-re-verified on upgrade. SDK-managed background worker lifetime remains controlled
-by the SDK.
+Opening validates configuration/SDK/credential presence without authenticating.
+The experiment is initialized lazily on the first trial event, with `update=False`
+and `set_current=False`. The SDK may create the named project if it is absent.
+Each trial is validated, uploaded as a top-level span, and synchronously flushed
+before the next write. A later invalid score or transport error can leave partial
+remote evidence. There is no batch-wide prevalidation or automatic retry.
 
-Synchronous SDK `flush()` returning successfully is the observable success signal; this has not
-been verified against an authenticated server in this environment. Failures that
-propagate from init/log/flush are separate reporting failures and must not replay
-tasks. Local artifacts remain authoritative. Cancellation during a synchronous SDK upload
-waits for that thread to finish even after repeated cancellation requests; Python cannot kill
-an active SDK thread. The remote experiment may already contain all or part of the
-run. Cancellation never promises that the server undid an upload.
+Braintrust scores must be in [0,1] or null. Export rejection never changes local
+scores. SDK 0.39.0 strips some top-level nulls; the exact trial projection in
+`metadata.mic.case` retains missing versus explicit-null values. Phase timing
+is exported as explicit metrics; remote span duration measures upload work.
 
-Implementation research: [Braintrust Python SDK reference](https://www.braintrust.dev/docs/sdks/python/versions/0.33.0)
-and [official logger implementation](https://raw.githubusercontent.com/braintrustdata/braintrust-sdk-python/main/py/src/braintrust/logger.py).
-Reporter tests cover both injected SDK doubles and the installed SDK. Neither
-counts as an authenticated live check. SDK payloads are deep copies, so SDK
-normalization cannot mutate local evidence. Logging/end failures retain their
-original error, record secondary cleanup failures as notes, and attempt a final
-flush of earlier queued spans before returning.
+Mic owns an isolated BraintrustState with synchronous flush and queue-drop
+disabled, because the pinned SDK's default background mode can swallow failures.
+The version-sensitive boundary is covered with local installed-SDK and fake
+transport tests. It does not mutate the process's default experiment/logger.
+Successful flush is the observable export signal, not a promise about later
+server availability. No authenticated live export was performed for this redesign.
 
-## Cloud equivalence demo
-
-`examples.provider_equivalence:bigquery_fixed` uses a literal, ordered SELECT of
-the same three offline cases. Set `MIC_BIGQUERY_PROJECT` and optionally
-`MIC_BIGQUERY_LOCATION`; authentication follows Application Default Credentials.
-
-For `examples.provider_equivalence:braintrust_fixed`, prepare an existing fixture
-whose input/expected match `examples/fixtures/triage.jsonl`. Store the logical case
-ID in `metadata.case_id` for each row. Set `MIC_BRAINTRUST_DATASET_ID` and the pinned
-`MIC_BRAINTRUST_XACT_ID`. The example's explicit mapper removes this transport-only
-metadata key, maps it to the case ID, and retains physical record ID in provenance.
-No fixture is created or modified by these examples. Source row ordering must also
-match when comparing snapshot digests; the same cases in a different order produce
-a different ordered snapshot.
+SDK calls are serialized on an owned worker. Cancellation joins that worker.
+A failed or cancelled upload can already have reached the server; Mic cannot
+undo it. Subsequent finalization never re-executes tasks or retries uncertain writes.
 
 ## Verification
 
-Acceptance tests exercise gates, async trials, invalid selectors, resource caps,
-report regeneration, escaping, CSP construction, SDK upload failures, and mutation
-isolation. Ten jsdom tests execute the actual report script for rendering,
-search/filter behavior, keyboard navigation, empty states, notices, and clipboard
-fallbacks. See the [verification guide](verification.md) for commands and remaining
-manual browser checks.
+Tests exercise public sink lifecycle, mutation isolation, cancellation, filesystem
+faults, malformed evidence, escaping/CSP, report limits, browser interactions, and
+local SDK contracts. See [verification](verification.md) for commands and the
+separate opt-in live-provider procedure.

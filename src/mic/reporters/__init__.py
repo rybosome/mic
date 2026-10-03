@@ -1,7 +1,6 @@
-"""Optional sinks for already-computed evaluation results."""
+"""Bounded, explicitly requested views of recorded evaluation results."""
 
-from mic.reporters.base import Reporter
 from mic.reporters.console import format_summary
 from mic.reporters.html import render_report, write_report
 
-__all__ = ["Reporter", "format_summary", "render_report", "write_report"]
+__all__ = ["format_summary", "render_report", "write_report"]

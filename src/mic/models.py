@@ -3,7 +3,6 @@
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from .errors import ConfigurationError, MissingExpectedError
@@ -14,10 +13,9 @@ type JsonObject = dict[str, JsonValue]
 
 _I = TypeVar("_I")
 _O = TypeVar("_O")
-_TaskE = TypeVar("_TaskE")
 
 # Python 3.12 has no stdlib TypeVar defaults. Keep defaults visible to type
-# checkers, and fill omitted runtime arguments in the two public context classes.
+# checkers; ScoreContext also fills its omitted runtime arguments below.
 if TYPE_CHECKING:
     from typing_extensions import TypeVar as DefaultTypeVar
 
@@ -77,24 +75,12 @@ class ReadLimits:
 
 
 @dataclass(frozen=True)
-class TaskContext(Generic[_TaskE, _M]):
+class TaskContext(Generic[_M]):
+    """Execution coordinates and optional metadata; never the reference answer."""
+
     case_id: str
     trial: int
-    expected: _TaskE | Missing
     metadata: _M | None
-
-    if not TYPE_CHECKING:
-
-        def __class_getitem__(cls, parameters: object) -> object:
-            args = parameters if isinstance(parameters, tuple) else (parameters,)
-            if len(args) == 1:
-                args = (*args, JsonObject)
-            return super().__class_getitem__(args)
-
-    def require_expected(self) -> _TaskE:
-        if isinstance(self.expected, Missing):
-            raise MissingExpectedError(f"Case {self.case_id!r} has no expected value")
-        return self.expected
 
 
 @dataclass(frozen=True)
@@ -134,9 +120,7 @@ class TaskResult[O]:
     metadata: JsonObject = field(default_factory=dict[str, JsonValue])
 
 
-type Task[I, O, E, M] = Callable[
-    [TaskContext[E, M], I], O | TaskResult[O] | Awaitable[O | TaskResult[O]]
-]
+type Task[I, O, M] = Callable[[TaskContext[M], I], O | TaskResult[O] | Awaitable[O | TaskResult[O]]]
 type ScoreValue = Score | float | int | None
 type Scoring[I, O, E, M] = Callable[[ScoreContext[I, O, E, M]], ScoreValue | Awaitable[ScoreValue]]
 type SourceFactory = Callable[[], object | Awaitable[object]]
@@ -164,22 +148,6 @@ class Evaluation[I, O, E, M]:
     dataset: Dataset[I, E, M]
     output: Schema[O]
     scorers: tuple[Scorer[I, O, E, M], ...]
-    function: Task[I, O, E, M] = field(repr=False)
+    function: Task[I, O, M] = field(repr=False)
     trials: int = 1
     concurrency: int = 10
-
-
-@dataclass(frozen=True)
-class RunResult:
-    manifest: JsonObject
-    cases: list[JsonObject]
-    output_dir: Path
-    exit_code: int
-
-    @property
-    def run_id(self) -> str:
-        return str(self.manifest["run_id"])
-
-    @property
-    def status(self) -> str:
-        return str(self.manifest["status"])

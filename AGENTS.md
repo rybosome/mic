@@ -36,14 +36,14 @@ Preserve these properties unless an approved design explicitly changes them:
   optional and are imported lazily.
 - Provider handles are passive descriptions. Import, discovery, listing, and inspection do
   not authenticate, contact remote services, or mutate state.
-- Dataset snapshots are finite, bounded, deterministic, and reusable. Limits fail visibly
-  rather than silently truncating data.
+- Datasets stream through bounded queues without retaining the full dataset or result set.
+  Factories return fresh sources; limits fail visibly rather than silently truncating data.
 - Missing values and explicit `null` values remain distinct. JSON evidence is finite and
   does not silently coerce unsupported values.
 - A failed trial or scorer does not erase unrelated successful work. Concurrency and
   cancellation behavior remain bounded and accurately described.
-- Local evidence is authoritative before optional remote reporting begins. Reporters do
-  not mutate results they receive.
+- Evidence recording and remote sinks are explicit opt-ins. Selected local recording runs
+  first in event delivery order. Sinks receive isolated values and apply backpressure.
 - Resource ownership and cleanup are explicit, including on failure and cancellation.
   Remember that synchronous work already running in a thread cannot be forcibly killed.
 - Credentials, private response bodies, and other secrets do not appear in errors,

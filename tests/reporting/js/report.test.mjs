@@ -18,34 +18,36 @@ const script = new vm.Script(fs.readFileSync(scriptUrl, 'utf8'), { filename: scr
 function fixture() {
   return {
     manifest: {
-      name: '<img src=x onerror=alert(1)>', run_id: 'run-example', status: 'failed',
-      dataset: { name: 'Synthetic tickets', rows: 3, digest: 'sha256:example' },
-      counts: { completed: 1, planned: 3, failed: 1, cancelled: 1 }, options: { trials: 1 },
-      scores: { exact: { mean: 0, count: 1, null_count: 1, unavailable_count: 1 } },
-      gates: [{ expression: 'exact>=0.9', passed: false }], provenance: { python: '3.12' },
-      failures: [
-        { phase: 'setup', type: 'DatasetError', message: 'Setup warning' },
-        { phase: 'task', type: 'ValueError', message: 'Case failure', case_id: 'failed' },
-      ],
-      reporting: {
-        braintrust: { status: 'failed', error: { message: 'Upload rejected' } },
-        second: { status: 'cancelled' },
+      run_id: 'run-example', status: 'failed',
+      summary: {
+        tasks: {'<img src=x onerror=alert(1)>': {
+          scores: {exact: {mean: 0, count: 1, min: 0, max: 0}}, trials: {}
+        }},
+        trials: {completed: 1, planned: 3, task_failed: 0, scoring_failed: 1, cancelled: 1}
       },
+      sources: {source: {name: 'Synthetic tickets', records_seen: 3, exhausted: true, digest: 'sha256:example'}},
+      requirements: [{expression: 'trials.task_failed == 0', passed: false}],
+      info: {tasks: {}},
+      failures: [{phase: 'setup', type: 'DatasetError', message: 'Setup warning'}],
+      sinks: [
+        {name: 'braintrust', status: 'failed', error: {message: 'Upload rejected'}},
+        {name: 'second', status: 'cancelled'},
+      ],
     },
     cases: [
       {
-        case_id: 'missing', row_index: 0, trial: 1, status: 'completed', input: { text: 'Alpha' },
+        source_id: 'source', task: 'test', case_id: 'missing', row_index: 0, trial: 1, status: 'completed', input: { text: 'Alpha' },
         output: null, scores: [{ name: 'exact', value: null, metadata: null }], errors: [],
         provenance: { line: 1 }, latency: { total_ms: 3 }, metadata: false, task_metadata: 0,
       },
       {
-        case_id: 'failed', row_index: 1, trial: 1, status: 'failed', input: 'Beta', expected: null,
+        source_id: 'source', task: 'test', case_id: 'failed', row_index: 1, trial: 1, status: 'scoring_failed', input: 'Beta', expected: null,
         scores: [{ name: 'exact', value: 0 }], provenance: { line: 2 },
         errors: [{ phase: 'scorer', type: 'ValueError', message: '<script>evil()</script>',
           scorer: 'exact', traceback: 'Traceback: fixture.py:42' }],
       },
       {
-        case_id: 'cancelled', row_index: 2, trial: 1, status: 'cancelled', input: 'Gamma',
+        source_id: 'source', task: 'test', case_id: 'cancelled', row_index: 2, trial: 1, status: 'cancelled', input: 'Gamma',
         scores: [], errors: [], provenance: { provider: 'memory' },
       },
     ],
@@ -84,8 +86,8 @@ test('summary and case values render as text; zero, null and missing retain mean
   assert.equal(ui.get('run-name').textContent, '<img src=x onerror=alert(1)>');
   assert.equal(ui.document.querySelectorAll('img').length, 0);
   assert.equal(ui.get('run-status').textContent, 'failed');
-  assert.match(ui.get('stats').textContent, /exact0\.0001 numeric · 1 unscored · 1 unavailable/);
-  assert.match(ui.get('stats').textContent, /Quality gates0 \/ 1exact>=0.9/);
+  assert.match(ui.get('stats').textContent, /exact0\.0001 numeric · min 0\.000 · max 0\.000/);
+  assert.match(ui.get('stats').textContent, /Quality gates0 \/ 1trials.task_failed == 0/);
   assert.equal(ui.get('selected-name').textContent, 'missing');
   assert.match(ui.get('panel-details').textContent, /ExpectedMissing — no expected valueOutputnull/);
   assert.match(ui.get('panel-details').textContent, /Dataset metadatafalseTask metadata0/);
@@ -96,7 +98,7 @@ test('summary and case values render as text; zero, null and missing retain mean
   ui.buttons()[1].click();
   assert.match(ui.get('panel-details').textContent, /ExpectednullOutputUnavailable/);
   assert.equal(JSON.parse(ui.get('raw-case').textContent).expected, null);
-  assert.equal(Object.hasOwn(JSON.parse(ui.get('raw-manifest').textContent), 'gates'), true);
+  assert.equal(Object.hasOwn(JSON.parse(ui.get('raw-manifest').textContent), 'requirements'), true);
 });
 
 test('case arrows and endpoints move selection and keyboard focus within the visible list', t => {
@@ -218,8 +220,8 @@ test('clipboard rejection after navigation does not select a different case ID',
 test('empty failed runs remain inspectable, with no stale selection or enabled copy action', t => {
   const payload = fixture();
   payload.cases = [];
-  payload.manifest.scores = {};
-  payload.manifest.gates = [];
+  payload.manifest.summary.tasks = {};
+  payload.manifest.requirements = [];
   const ui = mount(t, payload);
   assert.equal(ui.buttons().length, 0);
   assert.equal(ui.get('copy-id').disabled, true);
