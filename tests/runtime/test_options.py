@@ -25,7 +25,7 @@ def test_low_score_and_explicit_gate_have_distinct_exit_codes(tmp_path):
 
 def test_result_version_and_summary_only_shape(tmp_path):
     result = mic.run(evaluation([row()]), output=tmp_path)
-    assert result.to_json()["schema_version"] == "mic-run-v3"
+    assert result.to_json()["schema_version"] == "mic-run-v4"
     assert not hasattr(result, "cases")
     assert "p95" not in result.to_json()["summary"]["trials"]["total_ms"]
 
@@ -124,13 +124,15 @@ async def test_apreflight_reads_source_once_and_executes_no_callbacks():
 def test_sync_preflight_and_inspection_use_blocking_entrypoints():
     spec = evaluation([row()])
     ready = mic.preflight(spec)
-    inspected = mic.inspect_dataset(spec.dataset, limit=1)
+    inspected = mic.inspect_dataset(spec.dataset, limits=mic.ReadLimits(row_count=1))
     assert ready["tasks_executed"] == 0
     assert inspected["dataset"]["records_accepted"] == 1
 
 
 async def test_async_dataset_inspection_uses_prefixed_entrypoint():
-    inspected = await mic.ainspect_dataset(evaluation([row()]).dataset, limit=1)
+    inspected = await mic.ainspect_dataset(
+        evaluation([row()]).dataset, limits=mic.ReadLimits(row_count=1)
+    )
     assert inspected["dataset"]["records_accepted"] == 1
 
 

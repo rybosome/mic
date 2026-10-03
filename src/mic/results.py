@@ -74,7 +74,7 @@ class RunResult(EvaluationOutcome):
 
     def to_json(self) -> JsonObject:
         result = cast(JsonObject, to_json(self))
-        return {"schema_version": "mic-run-v3", **result}
+        return {"schema_version": "mic-run-v4", **result}
 
 
 def to_json(value: object) -> JsonValue:

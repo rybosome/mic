@@ -62,14 +62,15 @@ async def test_jsonl_invalid(tmp_path, content, match):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", ["json", "jsonl"])
-async def test_file_row_caps_fail_instead_of_truncate(tmp_path, suffix):
+async def test_file_selects_requested_prefix(tmp_path, suffix):
     path = tmp_path / f"rows.{suffix}"
     path.write_text(
         '[{"input":1},{"input":2}]' if suffix == "json" else '{"input":1}\n{"input":2}\n',
         encoding="utf-8",
     )
-    with pytest.raises(DatasetError, match="max_rows=1"):
-        await file_rows(path, ReadLimits(max_rows=1))
+    rows, _ = await file_rows(path, ReadLimits(row_count=1))
+    assert rows[0]["input"] == 1
+    assert len(rows) == 1
 
 
 @pytest.mark.asyncio
@@ -117,9 +118,8 @@ async def test_memory_sync_async_and_infinite_caps():
         while True:
             yield {"input": 3}
 
-    async with open_source(forever(), limits=ReadLimits(max_rows=2)) as read:
-        with pytest.raises(DatasetError, match="max_rows=2"):
-            _ = [row async for row in read.rows()]
+    async with open_source(forever(), limits=ReadLimits(row_count=2)) as read:
+        assert len([row async for row in read.rows()]) == 2
 
 
 @pytest.mark.asyncio

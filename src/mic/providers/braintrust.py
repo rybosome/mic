@@ -168,9 +168,19 @@ class _BraintrustRead:
         try:
             while True:
                 page += 1
-                # Fetch one extra row at the cap to distinguish completion from truncation.
-                page_limit = min(
-                    self.handle.page_size, self.ctx.limits.max_rows - self.ctx.rows_seen + 1
+                remaining = self.ctx.remaining_rows
+                if remaining == 0:
+                    return
+                page_limit = (
+                    self.handle.page_size
+                    if remaining is None
+                    else min(self.handle.page_size, remaining)
+                )
+                seconds = self.ctx.remaining_seconds
+                if seconds is not None and seconds <= 0:
+                    raise TimeoutError
+                timeout = (
+                    self.handle.timeout if seconds is None else min(self.handle.timeout, seconds)
                 )
                 rows_in_page = 0
                 async with self.client.stream(
@@ -178,7 +188,7 @@ class _BraintrustRead:
                     self.api_url + "/btql",
                     json=self._query(cursor, page_limit),
                     headers={"Authorization": f"Bearer {self.key}", "Accept": "application/jsonl"},
-                    timeout=self.handle.timeout,
+                    timeout=timeout,
                 ) as response:
                     if response.status_code >= 300:
                         # Do not dump credential-bearing response bodies into artifacts.

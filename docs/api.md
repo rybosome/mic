@@ -194,12 +194,16 @@ from running. Completed events follow completion order, with no reorder buffer.
 remain fatal. An empty/all-rejected evaluation fails. Source failure does not
 cancel previously admitted trials. Side effects already performed are not undone.
 
-`ReadLimits` defaults: 10,000 raw records and 60 seconds cumulative active
-reading/mapping time. There is no dataset or per-record byte cap; bounded queues
-limit the number of in-flight records, not their memory size.
-Time spent waiting for task or
-sink capacity does not consume the source budget. Caps fail visibly, never
-silently truncate. `max_executions` caps admitted trials, not an estimated source size.
+`ReadLimits(row_count=None, timeout_seconds=None)` selects raw records and configures
+cumulative active factory/read/mapping time. Both constraints are disabled by default.
+Explicit counts must be positive integers and timeouts finite positive numbers;
+booleans are rejected. Reaching the selected count succeeds without requesting
+another record, including when invalid records were skipped. The resulting
+`exhausted=false` means natural exhaustion was not observed.
+
+There is no dataset or per-record byte cap; bounded queues limit the number of
+in-flight records, not their size. Task/sink backpressure does not consume the
+read-time budget. `max_executions` separately caps admitted trials.
 
 Sync callbacks run on bounded threads. Trial timeout covers task, output validation,
 and scorers; it excludes queue/sink time. Timings include cooperative cleanup.
@@ -211,7 +215,8 @@ Invocation options override decorated defaults.
 `preflight` / `apreflight` drain and validate the source without tasks, retaining
 only counts and provenance. They raise `DatasetError` on invalid data and do not
 cache anything for a later run. `inspect_dataset` / `ainspect_dataset` intentionally
-collect a bounded prefix (default 20 records; explicit positive `limit` supported).
+collect a bounded prefix. Supply `limits=ReadLimits(row_count=N)` to choose its
+size; an omitted row count resolves to 20 for inspection, with no default timeout.
 
 ## Multiple evaluations
 
@@ -298,3 +303,37 @@ The final `RunResult` incorporates every sink receipt.
 
 See [sink lifecycle and Braintrust](reporting.md), [artifact schemas](artifacts.md),
 and [source authoring](providers.md#custom-sources).
+
+## Dataset factory context
+
+Factories accept either no positional parameters or one read context parameter.
+Its name and annotation do not control injection. Additional positional parameters,
+variadic arguments, and required keyword-only parameters are rejected when the
+Dataset is constructed. Optional keyword-only parameters retain their defaults.
+Sync functions, coroutine factories, generators, and async generators are supported.
+Direct Dataset construction follows the same rules as the decorator.
+
+`ReadContext` exposes read-only `limits`, `rows_seen`, `remaining_rows`, and
+`remaining_seconds`. Limits are immutable. Remaining values are clamped to zero,
+or `None` when that dimension is unconstrained. Mic counts each raw record before
+mapping, including `RecordError` and subsequently rejected records. At the next
+resume after a yield, the reader sees the updated count.
+
+The active time budget includes factory execution, retrieval, mapping, and
+validation, and pauses during downstream waiting. Providers should recalculate
+remaining time before each SDK operation and avoid passing zero as an SDK timeout.
+SDK timeout/retry semantics still determine how quickly blocking work returns.
+Cleanup runs even after expiration.
+
+A factory returning a DatasetSource shares its context with `read(ctx)`. Provenance
+updates from both are merged; finite JSON is copied and limited to 64 KiB. Mic
+captures it after cleanup, including factory failures. Sync factory execution,
+source initialization, iteration, and cleanup use one serialized worker thread.
+Resources should be acquired inside the reader and owned by `with`/`finally`.
+
+Selection and time budgets apply per distinct dataset read. Evaluations sharing
+one dataset object share its read and context; trials do not consume extra rows.
+
+This API replaces the former overflow guard and inspection's separate limit
+argument. Run evidence now uses `mic-run-v4` with `row_count` and nullable
+`timeout_seconds` in effective read configuration.

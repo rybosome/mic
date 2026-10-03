@@ -50,20 +50,20 @@ executes no trials. For suites, concurrency is global (default: largest selected
 decorator value), not multiplied per evaluation. Trials override all selected tasks;
 otherwise each uses its own default. `--max-executions` is global, source limits
 apply per distinct Dataset object, and identical Dataset objects share one read.
-Trials apply to every dataset case; `run` has no case-filter
-or prefix-selection flag.
+Trials apply to every accepted dataset case. `--limit` selects raw source
+records before validation; there is no case-filter flag.
 
 | Option | Commands | Default / meaning |
 | --- | --- | --- |
 | `--max-executions` | `preflight`, `run` | 50,000; cap on cases × trials. |
 | `--timeout` | `run` | Unset; cooperative per-trial deadline in seconds, covering task and scorers. |
-| `--max-rows` | `inspect`, `preflight`, `run` | 10,000 rows. |
-| `--dataset-timeout` | `inspect`, `preflight`, `run` | 60 seconds cumulative active source reading/mapping time, excluding downstream waiting. |
+| `--limit` | `inspect`, `preflight`, `run` | Unset for run/preflight; 20 for inspection. Selects raw records, including rejected records. |
+| `--dataset-timeout` | `inspect`, `preflight`, `run` | Unset; cumulative active factory/read/mapping time, excluding downstream waiting. |
 
-Safety caps fail visibly instead of silently truncating the dataset. Use
-`inspect --limit N` to select a prefix (default: 20 records).
+Selection ends successfully without reading beyond the requested count.
+Natural exhaustion is unconfirmed when the selection is reached.
 `run --on-invalid skip` skips recognized row mapping/schema errors; default `abort`
-stops admission. Transport/iterator errors and caps always fail. Previously admitted
+stops admission. Transport/iterator errors, timeouts, and the execution cap fail. Previously admitted
 trials finish; an empty or all-rejected evaluation fails.
 There is no dataset or per-record byte cap. See
 [provider limits](providers.md#shared-limits-and-identity) for memory implications.

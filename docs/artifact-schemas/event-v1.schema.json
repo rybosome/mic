@@ -71,7 +71,7 @@
           "minimum": 0
         },
         "error": {
-          "$ref": "common-v3.schema.json#/$defs/failure"
+          "$ref": "common-v4.schema.json#/$defs/failure"
         }
       },
       "required": [
@@ -113,7 +113,7 @@
           "minLength": 1
         },
         "result": {
-          "$ref": "common-v3.schema.json#/$defs/case"
+          "$ref": "common-v4.schema.json#/$defs/case"
         }
       },
       "required": [
@@ -142,7 +142,7 @@
           "minLength": 1
         },
         "summary": {
-          "$ref": "common-v3.schema.json#/$defs/source"
+          "$ref": "common-v4.schema.json#/$defs/source"
         }
       },
       "required": [

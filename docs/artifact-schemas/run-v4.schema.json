@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://rybosome.github.io/mic/artifact-schemas/run-v3.schema.json",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/run-v4.schema.json",
   "oneOf": [
     {
       "type": "object",
       "properties": {
         "schema_version": {
-          "const": "mic-run-v3"
+          "const": "mic-run-v4"
         },
         "run_id": {
           "type": "string",
@@ -27,7 +27,7 @@
       "type": "object",
       "properties": {
         "schema_version": {
-          "const": "mic-run-v3"
+          "const": "mic-run-v4"
         },
         "run_id": {
           "type": "string",
@@ -49,12 +49,12 @@
           ]
         },
         "summary": {
-          "$ref": "common-v3.schema.json#/$defs/summary"
+          "$ref": "common-v4.schema.json#/$defs/summary"
         },
         "sources": {
           "type": "object",
           "additionalProperties": {
-            "$ref": "common-v3.schema.json#/$defs/source"
+            "$ref": "common-v4.schema.json#/$defs/source"
           }
         },
         "requirements": {
@@ -98,13 +98,13 @@
         "failures": {
           "type": "array",
           "items": {
-            "$ref": "common-v3.schema.json#/$defs/failure"
+            "$ref": "common-v4.schema.json#/$defs/failure"
           }
         },
         "sinks": {
           "type": "array",
           "items": {
-            "$ref": "common-v3.schema.json#/$defs/receipt"
+            "$ref": "common-v4.schema.json#/$defs/receipt"
           }
         },
         "output_dir": {
@@ -132,7 +132,39 @@
                   "format": "date-time"
                 },
                 "tasks": {
-                  "type": "object"
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "limits": {
+                        "type": "object",
+                        "properties": {
+                          "row_count": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "minimum": 1
+                          },
+                          "timeout_seconds": {
+                            "type": [
+                              "number",
+                              "null"
+                            ],
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "required": [
+                          "row_count",
+                          "timeout_seconds"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "limits"
+                    ]
+                  }
                 }
               },
               "required": [

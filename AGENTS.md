@@ -37,7 +37,8 @@ Preserve these properties unless an approved design explicitly changes them:
 - Provider handles are passive descriptions. Import, discovery, listing, and inspection do
   not authenticate, contact remote services, or mutate state.
 - Datasets stream through bounded queues without retaining the full dataset or result set.
-  Factories return fresh sources; limits fail visibly rather than silently truncating data.
+  Factories return fresh sources; explicit row selection stops successfully and
+  records a prefix without claiming exhaustion. Read timeouts fail visibly.
 - Missing values and explicit `null` values remain distinct. JSON evidence is finite and
   does not silently coerce unsupported values.
 - A failed trial or scorer does not erase unrelated successful work. Concurrency and

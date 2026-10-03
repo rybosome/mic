@@ -2,25 +2,23 @@
 
 import asyncio
 import hashlib
-import inspect
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from typing import Literal, cast
 
-from .._async import drain, run_sync
+from .._async import run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import MISSING, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
 from ..results import Failure, SourceSummary, failure, to_json
 from ..sources import RecordError
 from .callbacks import CallbackPool
 from .contracts import Case
-from .sources import SourceRead, open_source
+from .read_context import ReadState
+from .sources import SourceRead
 from .validation import (
     describe,
     dumps,
     json_object,
     nonempty,
-    positive_integer,
     serialize,
     validate,
 )
@@ -44,35 +42,6 @@ def map_envelope(row: object) -> RawCase:
         metadata=value.get("metadata"),
         provenance=json_object(value.get("provenance", {})),
     )
-
-
-async def resolve_source[I, E, M](dataset: Dataset[I, E, M]) -> object:
-    factory = dataset.factory
-    if inspect.iscoroutinefunction(factory):
-        return await cast(Awaitable[object], factory())
-    pending = asyncio.create_task(asyncio.to_thread(factory))
-    try:
-        result = await asyncio.shield(pending)
-    except asyncio.CancelledError:
-        try:
-            abandoned = await drain(pending)
-            if inspect.iscoroutine(abandoned):
-                abandoned.close()
-            else:
-                async_close = getattr(abandoned, "aclose", None)
-                close = getattr(abandoned, "close", None)
-                if callable(async_close):
-                    await drain(
-                        asyncio.ensure_future(cast(Callable[[], Awaitable[None]], async_close)())
-                    )
-                elif callable(close):
-                    await drain(
-                        asyncio.create_task(asyncio.to_thread(cast(Callable[[], None], close)))
-                    )
-        except Exception:
-            pass
-        raise
-    return await cast(Awaitable[object], result) if inspect.isawaitable(result) else result
 
 
 def describe_dataset[I, E, M](dataset: Dataset[I, E, M]) -> JsonObject:
@@ -144,7 +113,7 @@ class DatasetReader[I, E, M]:
         self.provenance: JsonObject = {}
         self._digest = hashlib.sha256()
         self._used = False
-        self._remaining = limits.timeout_seconds
+        self.context = ReadState(limits)
 
     def summary(self) -> SourceSummary:
         return SourceSummary(
@@ -159,20 +128,20 @@ class DatasetReader[I, E, M]:
         )
 
     async def _timed[T](self, function: Callable[[], Awaitable[T]]) -> T:
-        started = time.perf_counter()
+        self.context.start()
         try:
-            if self._remaining <= 0:
+            remaining = self.context.remaining_seconds
+            if remaining is not None and remaining <= 0:
                 raise TimeoutError
-            async with asyncio.timeout(self._remaining):
+            async with asyncio.timeout(remaining):
                 result = await function()
-                # A completed callback can race the event loop timeout callback.
-                if time.perf_counter() - started >= self._remaining:
+                if self.context.remaining_seconds == 0:
                     raise TimeoutError
                 return result
         except TimeoutError:
             raise DatasetError("Source read budget exceeded (TimeoutError)") from None
         finally:
-            self._remaining -= time.perf_counter() - started
+            self.context.pause()
 
     async def rows(
         self,
@@ -181,69 +150,76 @@ class DatasetReader[I, E, M]:
             raise ConfigurationError("A dataset read may only be consumed once")
         self._used = True
         pool = CallbackPool(1)
-        read: SourceRead | None = None
+        read = SourceRead(None, self.limits, context=self.context)
         try:
-            source = await self._timed(lambda: resolve_source(self.dataset))
-            async with open_source(source, limits=self.limits) as read:
-                iterator = read.rows()
-                try:
-                    while True:
-                        try:
-                            raw = await self._timed(lambda: anext(iterator))
-                        except StopAsyncIteration:
-                            self.exhausted = True
-                            break
-                        index = self.seen
-                        self.seen += 1
-                        case_id = f"{self.source_id}:r{index}"
-                        try:
-                            if isinstance(raw, RecordError):
-                                raise ValueError("Source yielded a malformed record")
-                            case, normalized = await self._timed(
-                                lambda: pool.invoke(
-                                    normalize_case,
-                                    self.dataset,
-                                    raw,
-                                    case_id,
-                                    self.require_expected,
-                                )
+            await self._timed(lambda: read.resolve(self.dataset.factory))
+            iterator = read.rows()
+            try:
+                while True:
+                    try:
+                        raw = await self._timed(lambda: anext(iterator))
+                    except StopAsyncIteration:
+                        self.exhausted = read.exhausted
+                        break
+                    index = self.seen
+                    self.seen += 1
+                    case_id = f"{self.source_id}:r{index}"
+                    try:
+                        if isinstance(raw, RecordError):
+                            raise ValueError("Source yielded a malformed record")
+                        case, normalized = await self._timed(
+                            lambda: pool.invoke(
+                                normalize_case,
+                                self.dataset,
+                                raw,
+                                case_id,
+                                self.require_expected,
                             )
-                        except (ValueError, TypeError) as exc:
-                            self.rejected += 1
-                            error = failure("record", exc)
-                            yield index, error
-                            if self.on_invalid == "abort":
-                                raise DatasetError("Malformed dataset record") from None
-                            continue
-                        logical = {
-                            key: value for key, value in normalized.items() if key != "provenance"
-                        }
-                        self._digest.update((dumps(logical) + "\n").encode("utf-8"))
-                        self.accepted += 1
-                        yield index, case, normalized
-                finally:
-                    await iterator.aclose()
+                        )
+                    except (ValueError, TypeError) as exc:
+                        self.rejected += 1
+                        error = failure("record", exc)
+                        yield index, error
+                        if self.on_invalid == "abort":
+                            raise DatasetError("Malformed dataset record") from None
+                        continue
+                    logical = {
+                        key: value for key, value in normalized.items() if key != "provenance"
+                    }
+                    self._digest.update((dumps(logical) + "\n").encode("utf-8"))
+                    self.accepted += 1
+                    yield index, case, normalized
+            finally:
+                await iterator.aclose()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.error = failure("source", exc)
             raise
         finally:
-            if read is not None:
+            try:
+                await read.close()
+            except Exception as exc:
+                if self.error is None:
+                    self.error = failure("source", exc)
+                raise
+            finally:
                 self.provenance = read.provenance
                 self.seen = read.context.rows_seen
-            await pool.close()
+                await pool.close()
 
 
 async def ainspect_dataset[I, E, M](
     dataset: Dataset[I, E, M],
     *,
-    limit: int | None = None,
     limits: ReadLimits | None = None,
 ) -> JsonObject:
     describe_dataset(dataset)
-    selected = 20 if limit is None else positive_integer("limit", limit)
-    reader = DatasetReader(dataset, "inspection", limits or ReadLimits())
+    configured = limits or ReadLimits()
+    effective = ReadLimits(
+        row_count=configured.row_count or 20, timeout_seconds=configured.timeout_seconds
+    )
+    reader = DatasetReader(dataset, "inspection", effective)
     rows: list[JsonValue] = []
     iterator = reader.rows()
     try:
@@ -252,8 +228,6 @@ async def ainspect_dataset[I, E, M](
                 raise DatasetError("Malformed dataset record")
             index, case, value = item
             rows.append({"case_id": case.id, "row_index": index, **value})
-            if len(rows) >= selected:
-                break
     except (ConfigurationError, DatasetError):
         raise
     except Exception as exc:
@@ -266,11 +240,10 @@ async def ainspect_dataset[I, E, M](
 def inspect_dataset[I, E, M](
     dataset: Dataset[I, E, M],
     *,
-    limit: int | None = None,
     limits: ReadLimits | None = None,
 ) -> JsonObject:
     return run_sync(
         "mic.inspect_dataset()",
         "mic.ainspect_dataset",
-        lambda: ainspect_dataset(dataset, limit=limit, limits=limits),
+        lambda: ainspect_dataset(dataset, limits=limits),
     )

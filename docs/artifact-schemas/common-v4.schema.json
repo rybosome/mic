@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://rybosome.github.io/mic/artifact-schemas/common-v3.schema.json",
+  "$id": "https://rybosome.github.io/mic/artifact-schemas/common-v4.schema.json",
   "$defs": {
     "statistics": {
       "type": "object",
@@ -64,13 +64,13 @@
           "minimum": 0
         },
         "task_ms": {
-          "$ref": "common-v3.schema.json#/$defs/statistics"
+          "$ref": "common-v4.schema.json#/$defs/statistics"
         },
         "scoring_ms": {
-          "$ref": "common-v3.schema.json#/$defs/statistics"
+          "$ref": "common-v4.schema.json#/$defs/statistics"
         },
         "total_ms": {
-          "$ref": "common-v3.schema.json#/$defs/statistics"
+          "$ref": "common-v4.schema.json#/$defs/statistics"
         }
       },
       "required": [
@@ -147,7 +147,7 @@
         "error": {
           "anyOf": [
             {
-              "$ref": "common-v3.schema.json#/$defs/failure"
+              "$ref": "common-v4.schema.json#/$defs/failure"
             },
             {
               "type": "null"
@@ -191,7 +191,7 @@
         "error": {
           "anyOf": [
             {
-              "$ref": "common-v3.schema.json#/$defs/failure"
+              "$ref": "common-v4.schema.json#/$defs/failure"
             },
             {
               "type": "null"
@@ -376,11 +376,11 @@
               "scores": {
                 "type": "object",
                 "additionalProperties": {
-                  "$ref": "common-v3.schema.json#/$defs/statistics"
+                  "$ref": "common-v4.schema.json#/$defs/statistics"
                 }
               },
               "trials": {
-                "$ref": "common-v3.schema.json#/$defs/trials"
+                "$ref": "common-v4.schema.json#/$defs/trials"
               }
             },
             "required": [
@@ -391,7 +391,7 @@
           }
         },
         "trials": {
-          "$ref": "common-v3.schema.json#/$defs/trials"
+          "$ref": "common-v4.schema.json#/$defs/trials"
         }
       },
       "required": [

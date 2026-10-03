@@ -401,8 +401,7 @@ def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_pat
         return stream
 
     monkeypatch.setattr(Path, "open", track_open)
-    source = module.YamlDocuments(path)
-    records = source.read(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory(mic.ReadContext(mic.ReadLimits()))
     assert opened == []
     assert next(records) == {"input": "first"}
     assert len(opened) == 1
@@ -418,6 +417,6 @@ def test_inline_yaml_source_sanitizes_parser_errors(quickstart, tmp_path):
     exec(snippet("yaml-dataset"), module.__dict__)
     path = tmp_path / "tickets.yaml"
     path.write_text("input: [private source excerpt\n", encoding="utf-8")
-    records = module.YamlDocuments(path).read(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory(mic.ReadContext(mic.ReadLimits()))
     with pytest.raises(mic.DatasetError, match="^Invalid YAML document stream$"):
         list(records)

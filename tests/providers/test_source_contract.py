@@ -118,9 +118,9 @@ async def test_malformed_source_contract_and_row_caps_are_central() -> None:
         def read(self, ctx):
             yield from range(3)
 
-    with pytest.raises(mic.DatasetError, match="max_rows=2"):
-        async with open_source(Source(), limits=mic.ReadLimits(max_rows=2)) as read:
-            _ = [row async for row in read.rows()]
+    async with open_source(Source(), limits=mic.ReadLimits(row_count=2)) as read:
+        assert [row async for row in read.rows()] == [0, 1]
+        assert not read.exhausted
 
 
 def test_context_isolates_and_bounds_provenance() -> None:
