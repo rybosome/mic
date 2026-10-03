@@ -12,6 +12,7 @@ def test_top_level_api_is_intentional() -> None:
         "DatasetError",
         "DatasetSource",
         "Evaluation",
+        "EvaluationDefinition",
         "EvaluationSummary",
         "JsonObject",
         "JsonValue",

@@ -137,7 +137,7 @@
       return;
     }
     $('selected-name').textContent = row.case_id;
-    $('selected-meta').textContent = `${row.status} · row ${row.row_index} · trial ${row.trial} · ${numeric(row.latency?.total_ms)} ms total`;
+    $('selected-meta').textContent = `${row.task} · ${row.status} · row ${row.row_index} · trial ${row.trial} · ${numeric(row.latency?.total_ms)} ms total`;
     $('raw-case').textContent = json(row);
     renderDetails(row);
     $('panel-provenance').replaceChildren(
@@ -176,7 +176,7 @@
       const heading = text('span', '', 'case-id');
       heading.append(text('span', row.case_id), text('span', '●', `dot ${row.status}`));
       const scores = (row.scores ?? []).map(score => `${score.name} ${numeric(score.value)}`).join(' · ') || 'no scores';
-      button.append(heading, text('small', `Trial ${row.trial} · ${row.status} · ${scores}`));
+      button.append(heading, text('small', `${row.task} · Trial ${row.trial} · ${row.status} · ${scores}`));
       button.addEventListener('click', () => selectCase(index));
       button.addEventListener('keydown', event => moveCase(event, index));
       $('case-list').append(button);

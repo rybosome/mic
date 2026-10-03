@@ -230,3 +230,16 @@ test('empty failed runs remain inspectable, with no stale selection or enabled c
   ui.get('tab-errors').click();
   assert.equal(ui.get('panel-errors').hidden, false);
 });
+
+
+test('shared case coordinates remain distinguishable by task', t => {
+  const payload = fixture();
+  payload.cases = [payload.cases[0], {...payload.cases[0], task: 'candidate'}];
+  const ui = mount(t, payload);
+  assert.match(ui.buttons()[0].textContent, /test · Trial 1/);
+  assert.match(ui.buttons()[1].textContent, /candidate · Trial 1/);
+  ui.buttons()[1].click();
+  assert.match(ui.get('selected-meta').textContent, /candidate · completed/);
+  ui.search('candidate');
+  assert.equal(ui.buttons().length, 1);
+});

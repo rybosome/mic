@@ -142,8 +142,12 @@ class Scorer[I, O, E, M]:
     requires_expected: bool = True
 
 
+class EvaluationDefinition:
+    """Non-generic base for heterogeneous selections of typed evaluations."""
+
+
 @dataclass(frozen=True)
-class Evaluation[I, O, E, M]:
+class Evaluation[I, O, E, M](EvaluationDefinition):
     name: str
     dataset: Dataset[I, E, M]
     output: Schema[O]

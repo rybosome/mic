@@ -17,35 +17,24 @@ from .aggregation import Aggregator
 from .callbacks import CallbackPool
 from .case import cancelled_case, observation, run_case
 from .contracts import Case
-from .datasets import DatasetReader, describe_dataset
+from .datasets import DatasetReader
 from .delivery import Delivery
 from .files import atomic_write
-from .options import Options, resolve_options
-from .provenance import code_provenance
+from .options import resolve_options
+from .planning import BoundTask, RunSelection, configuration, plan
 from .recorder import JsonlSink
 from .requirements import parse_requirements
-from .validation import describe, dumps, nonempty
+from .validation import dumps, nonempty
 
 
 @dataclass(frozen=True)
-class _Job[I, E, M]:
+class _Job:
+    task: BoundTask
+    source_id: str
     row_index: int
     trial: int
-    case: Case[I, E, M]
+    case: Case[object, object, object]
     encoded: JsonObject
-
-
-def _configuration[I, O, E, M](
-    spec: Evaluation[I, O, E, M],
-    options: Options,
-) -> JsonObject:
-    return {
-        "dataset": describe_dataset(spec.dataset),
-        "output": describe(spec.output, "output"),
-        "options": options.as_json(),
-        "scores": [scorer.name for scorer in spec.scorers],
-        "provenance": code_provenance(spec.function),
-    }
 
 
 async def apreflight[I, O, E, M](
@@ -59,7 +48,7 @@ async def apreflight[I, O, E, M](
     options = resolve_options(
         spec, trials=trials, concurrency=concurrency, timeout=None, max_executions=max_executions
     )
-    _configuration(spec, options)
+    configuration(spec, options)
     reader = DatasetReader(
         spec.dataset,
         "preflight",
@@ -113,8 +102,8 @@ def preflight[I, O, E, M](
     )
 
 
-async def arun[I, O, E, M](
-    spec: Evaluation[I, O, E, M],
+async def arun(
+    spec: RunSelection,
     *,
     output: Path | str | None = None,
     trials: int | None = None,
@@ -127,11 +116,11 @@ async def arun[I, O, E, M](
     on_invalid: Literal["abort", "skip"] = "abort",
 ) -> RunResult:
     """Stream once; no files without output=. Cancellation drains then re-raises."""
-    options = resolve_options(
+    execution = plan(
         spec, trials=trials, concurrency=concurrency, timeout=timeout, max_executions=max_executions
     )
-    config = _configuration(spec, options)
-    metrics = {spec.name: [s.name for s in spec.scorers]}
+    capacity = execution.concurrency
+    metrics = {task.spec.name: [s.name for s in task.spec.scorers] for task in execution.tasks}
     requirements = parse_requirements(require, metrics)
     if on_invalid not in ("abort", "skip"):
         raise ConfigurationError("on_invalid must be 'abort' or 'skip'")
@@ -153,19 +142,27 @@ async def arun[I, O, E, M](
         raise ConfigurationError(f"Output directory must be empty: {destination}")
 
     run_id = uuid.uuid4().hex
-    info = RunInfo(run_id, datetime.now(UTC).isoformat(), {spec.name: config})
-    source_id = f"{run_id}:s0"
-    reader = DatasetReader(
-        spec.dataset,
-        source_id,
-        limits or ReadLimits(),
-        on_invalid=on_invalid,
-        require_expected=any(s.requires_expected for s in spec.scorers),
+    info = RunInfo(
+        run_id,
+        datetime.now(UTC).isoformat(),
+        {task.spec.name: task.config for task in execution.tasks},
     )
+    readers = [
+        DatasetReader(
+            group.dataset,
+            f"{run_id}:s{index}",
+            limits or ReadLimits(),
+            on_invalid=on_invalid,
+            require_expected=any(
+                s.requires_expected for task in group.tasks for s in task.spec.scorers
+            ),
+        )
+        for index, group in enumerate(execution.groups)
+    ]
     aggregate = Aggregator(metrics)
     delivery = Delivery()
-    pool = CallbackPool(options.concurrency)
-    jobs: asyncio.Queue[_Job[I, E, M] | None] = asyncio.Queue(maxsize=options.concurrency)
+    pool = CallbackPool(capacity)
+    jobs: asyncio.Queue[_Job | None] = asyncio.Queue(maxsize=capacity)
     interrupted: asyncio.CancelledError | None = None
     failures: list[Failure] = []
     admitted = 0
@@ -178,12 +175,12 @@ async def arun[I, O, E, M](
             interrupted = exc
             return await drain(pending)
 
-    async def publish(job: _Job[I, E, M], result: JsonObject) -> None:
-        aggregate.observe(spec.name, observation(result))
+    async def publish(job: _Job, result: JsonObject) -> None:
+        aggregate.observe(job.task.spec.name, observation(result))
         await delivery.write(
             TrialFinished(
-                spec.name,
-                source_id,
+                job.task.spec.name,
+                job.source_id,
                 job.row_index,
                 job.trial,
                 job.case.id,
@@ -191,32 +188,33 @@ async def arun[I, O, E, M](
             )
         )
 
-    async def producer() -> None:
+    async def produce_source(
+        reader: DatasetReader[object, object, object], tasks: tuple[BoundTask, ...]
+    ) -> None:
         nonlocal admitted
         iterator = reader.rows()
-        cancelled = False
         try:
             async for item in iterator:
                 if delivery.failed:
                     break
                 if len(item) == 2:
                     index, error = item
-                    await delivery.write(RecordRejected(source_id, index, error))
+                    await delivery.write(RecordRejected(reader.source_id, index, error))
                     continue
                 index, case, normalized = item
-                await delivery.write(CaseAccepted(source_id, index, case.id, normalized))
-                for trial in range(1, options.trials + 1):
-                    if delivery.failed:
-                        break
-                    if admitted >= options.max_executions:
-                        raise DatasetError(f"Run exceeds max_executions={options.max_executions}")
-                    await jobs.put(_Job(index, trial, case, normalized))
-                    aggregate.admit(spec.name)
-                    admitted += 1
+                await delivery.write(CaseAccepted(reader.source_id, index, case.id, normalized))
+                for task in tasks:
+                    for trial in range(1, task.options.trials + 1):
+                        if delivery.failed:
+                            return
+                        if admitted >= max_executions:
+                            raise DatasetError(f"Run exceeds max_executions={max_executions}")
+                        await jobs.put(_Job(task, reader.source_id, index, trial, case, normalized))
+                        aggregate.admit(task.spec.name)
+                        admitted += 1
                 if delivery.failed:
                     break
         except asyncio.CancelledError:
-            cancelled = True
             raise
         except Exception as exc:
             reader.error = failure("source", exc)
@@ -225,9 +223,23 @@ async def arun[I, O, E, M](
                 await iterator.aclose()
             except Exception as exc:
                 reader.error = failure("source_close", exc)
-            await delivery.write(SourceFinished(source_id, reader.summary()))
+            await delivery.write(SourceFinished(reader.source_id, reader.summary()))
+
+    async def producer() -> None:
+        cancelled = False
+        try:
+            for reader, group in zip(readers, execution.groups, strict=True):
+                if delivery.failed:
+                    break
+                await produce_source(reader, group.tasks)
+                if admitted >= max_executions and reader.error is not None:
+                    break
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
             if not cancelled:
-                for _ in range(options.concurrency):
+                for _ in range(capacity):
                     await jobs.put(None)
 
     async def worker() -> None:
@@ -235,12 +247,12 @@ async def arun[I, O, E, M](
             try:
                 try:
                     result = await run_case(
-                        spec,
+                        job.task.spec,
                         job.case,
                         job.encoded,
                         job.row_index,
                         job.trial,
-                        options,
+                        job.task.options,
                         pool,
                     )
                 except asyncio.CancelledError:
@@ -256,7 +268,7 @@ async def arun[I, O, E, M](
         await delivery.open(selected_sinks, info)
         if not delivery.failed:
             workers = [asyncio.create_task(producer())]
-            workers.extend(asyncio.create_task(worker()) for _ in range(options.concurrency))
+            workers.extend(asyncio.create_task(worker()) for _ in range(capacity))
             await asyncio.gather(*workers)
     except asyncio.CancelledError as exc:
         interrupted = exc
@@ -288,13 +300,19 @@ async def arun[I, O, E, M](
 
     summary = aggregate.snapshot()
     outcomes = tuple(requirement.evaluate(summary) for requirement in requirements)
-    if summary.trials.planned == 0 and interrupted is None:
-        failures.append(Failure("execution", "EmptyEvaluation", "No valid trials were admitted"))
+    if interrupted is None:
+        for name, task_summary in summary.tasks.items():
+            if task_summary.trials.planned == 0:
+                failures.append(
+                    Failure(
+                        "execution", "EmptyEvaluation", f"No valid trials admitted for {name!r}"
+                    )
+                )
     exit_code = (
         130
         if interrupted is not None
         else 2
-        if reader.error is not None
+        if any(reader.error is not None for reader in readers)
         else 1
         if failures
         or summary.trials.task_failed
@@ -308,7 +326,7 @@ async def arun[I, O, E, M](
         "cancelled" if interrupted is not None else "failed" if exit_code else "completed",
         exit_code,
         summary,
-        {source_id: reader.summary()},
+        {reader.source_id: reader.summary() for reader in readers},
         outcomes,
         tuple(failures),
     )
@@ -364,8 +382,8 @@ def _publish_result(destination: Path, result: RunResult) -> RunResult:
     return result
 
 
-def run[I, O, E, M](
-    spec: Evaluation[I, O, E, M],
+def run(
+    spec: RunSelection,
     *,
     output: Path | str | None = None,
     trials: int | None = None,
