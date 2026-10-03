@@ -1,114 +1,117 @@
-"""Bounded JSON-array and JSONL file reads with physical row provenance."""
+"""Incremental JSON-array and JSONL sources with physical row provenance."""
 
-import hashlib
-import json
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
 
 from mic.errors import ConfigurationError, DatasetError
-from mic.models import JsonObject, JsonValue, ReadLimits
+from mic.models import JsonObject
+from mic.sources import DatasetSource, ReadContext, RecordError
 
-from ._io import ReadBudget, in_thread, parse_json
+from ._io import parse_json
 
 
 @dataclass(frozen=True)
-class FileHandle:
+class FileHandle(DatasetSource):
     path: Path | str
     format: Literal["json", "jsonl"] | None = None
 
-
-@dataclass
-class _FileRead:
-    stream: BinaryIO
-    path: Path
-    format: Literal["json", "jsonl"]
-    limits: ReadLimits
-    provenance: JsonObject
-    used: bool = False
-
-    def _row(self, row: JsonValue, index: int, *, line: int | None = None) -> JsonObject:
-        if not isinstance(row, dict):
-            raise DatasetError(f"{self.path}: row {index}: expected a JSON case object")
-        result = dict(row)
-        existing = result.get("provenance", {})
-        if not isinstance(existing, dict):
-            raise DatasetError(f"{self.path}: row {index}: provenance must be an object")
-        provenance: JsonObject = {**existing, "file": str(self.path), "source_row": index}
-        if line is not None:
-            provenance["line"] = line
-        result["provenance"] = provenance
-        return result
-
-    async def rows(self) -> AsyncIterator[object]:
-        if self.used:
-            raise DatasetError(f"{self.path}: a read may only be iterated once")
-        self.used = True
-        budget = ReadBudget(self.limits, str(self.path))
-        digest = hashlib.sha256()
-        self.provenance["read_complete"] = False
-        if self.format == "json":
-            data = await in_thread(lambda: self.stream.read(self.limits.max_bytes + 1))
-            budget.add_bytes(len(data))
-            digest.update(data)
-            self.provenance.update({"raw_sha256": digest.hexdigest(), "raw_bytes": budget.bytes})
-            content = parse_json(data, str(self.path))
-            if not isinstance(content, list):
-                raise DatasetError(f"{self.path}: JSON file must contain an array of case objects")
-            for index, row in enumerate(content, start=1):
-                size = len(json.dumps(row, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-                budget.add_row(size)
-                yield self._row(row, index)
-        else:
-            line_number = 0
-            while True:
-                data = await in_thread(
-                    lambda: self.stream.readline(self.limits.max_record_bytes + 2)
-                )
-                if not data:
-                    break
-                line_number += 1
-                digest.update(data)
-                budget.add_bytes(len(data))
-                payload = data.rstrip(b"\r\n")
-                if len(payload) > self.limits.max_record_bytes:
-                    raise DatasetError(
-                        f"{self.path}: line {line_number}: "
-                        f"max_record_bytes={self.limits.max_record_bytes} exceeded"
-                    )
-                if not payload.strip():
-                    continue
-                budget.add_row(len(payload))
-                self.provenance.update(
-                    {"raw_prefix_sha256": digest.hexdigest(), "raw_bytes": budget.bytes}
-                )
-                row = parse_json(payload, f"{self.path}: line {line_number}")
-                yield self._row(row, budget.rows, line=line_number)
-        self.provenance.pop("raw_prefix_sha256", None)
-        self.provenance.update(
-            {"raw_sha256": digest.hexdigest(), "raw_bytes": budget.bytes, "read_complete": True}
+    def read(self, ctx: ReadContext) -> Iterator[object]:
+        path = Path(self.path).expanduser().resolve()
+        format = self.format or (
+            "jsonl" if path.suffix.lower() in {".jsonl", ".ndjson"} else "json"
         )
-
-
-class FileLoader:
-    @asynccontextmanager
-    async def open(self, handle: FileHandle, *, limits: ReadLimits) -> AsyncGenerator[_FileRead]:
-        path = Path(handle.path).expanduser().resolve()
-        format = handle.format
-        if format is None:
-            format = "jsonl" if path.suffix.lower() in {".jsonl", ".ndjson"} else "json"
         if format not in {"json", "jsonl"}:
             raise ConfigurationError(f"unsupported file format {format!r}")
+        ctx.set_provenance(provider="file", path=str(path), format=format)
         try:
-            with path.open("rb") as stream:
-                yield _FileRead(
-                    stream,
-                    path,
-                    format,
-                    limits,
-                    {"provider": "file", "path": str(path), "format": format},
-                )
-        except OSError as exc:
-            raise DatasetError(f"{path}: could not read dataset: {exc}") from exc
+            with ctx.open_binary(path) as stream:
+                if format == "json":
+                    for index, data in enumerate(_array_records(stream, ctx), start=1):
+                        yield _record(data, path, index)
+                else:
+                    line_number = 0
+                    index = 0
+                    while data := stream.readline(ctx.limits.max_record_bytes + 2):
+                        line_number += 1
+                        payload = data.rstrip(b"\r\n")
+                        ctx.check_record_bytes(len(payload))
+                        if not payload.strip():
+                            continue
+                        index += 1
+                        yield _record(payload, path, index, line=line_number)
+        except OSError:
+            raise DatasetError("Could not read dataset file") from None
+
+
+def _record(data: bytes, path: Path, index: int, *, line: int | None = None) -> object:
+    source = f"{path}: " + (f"line {line}" if line is not None else f"row {index}")
+    try:
+        row = parse_json(data, source)
+        if not isinstance(row, dict):
+            raise DatasetError(f"{source}: expected a JSON case object")
+        existing = row.get("provenance", {})
+        if not isinstance(existing, dict):
+            raise DatasetError(f"{source}: provenance must be an object")
+        provenance: JsonObject = {**existing, "file": str(path), "source_row": index}
+        if line is not None:
+            provenance["line"] = line
+        return {**row, "provenance": provenance}
+    except DatasetError as exc:
+        return RecordError(str(exc))
+
+
+def _array_records(stream: BinaryIO, ctx: ReadContext) -> Iterator[bytes]:
+    """Frame one JSON value at a time, without decoding the surrounding array.
+
+    Framing errors abort: without a reliable boundary it is unsafe to skip ahead.
+    Individual framed values still pass through the strict JSON decoder.
+    """
+    started = ended = quoted = escaped = False
+    depth = 0
+    after_comma = False
+    record = bytearray()
+    while chunk := stream.read(min(8192, ctx.limits.max_record_bytes + 1)):
+        for byte in chunk:
+            if not started:
+                if byte in b" \t\r\n":
+                    continue
+                if byte != ord("["):
+                    raise DatasetError("JSON file must contain an array of case objects")
+                started = True
+                continue
+            if ended:
+                if byte not in b" \t\r\n":
+                    raise DatasetError("Unexpected content after JSON array")
+                continue
+            if not quoted and depth == 0 and byte in b",]":
+                payload = bytes(record).strip()
+                if payload:
+                    yield payload
+                elif byte == ord(",") or after_comma:
+                    raise DatasetError("Empty record or trailing comma in JSON array")
+                record.clear()
+                after_comma = byte == ord(",")
+                ended = byte == ord("]")
+                continue
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif byte == ord("\\"):
+                    escaped = True
+                elif byte == ord('"'):
+                    quoted = False
+            elif byte == ord('"'):
+                quoted = True
+            elif byte in b"{[":
+                depth += 1
+            elif byte in b"}]":
+                depth -= 1
+                if depth < 0:
+                    raise DatasetError("Unbalanced JSON array record")
+            if record or byte not in b" \t\r\n":
+                record.append(byte)
+                ctx.check_record_bytes(len(record))
+    if not ended or depth or quoted:
+        raise DatasetError("Incomplete JSON array")

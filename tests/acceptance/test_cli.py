@@ -143,47 +143,7 @@ def test_bad_configuration_has_exit_2(args: tuple[str, ...]) -> None:
     assert "mic:" in process.stderr
 
 
-@pytest.mark.parametrize("symbol", ["data", "evaluation"])
-def test_estimate_invokes_factory_once_without_rows_or_tasks(
-    symbol: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from types import ModuleType
-
-    import mic
-    import mic.cli as cli
-
-    calls = {"factory": 0, "estimate": 0, "task": 0}
-    handle = object()
-
-    @mic.dataset(name="estimated.data", schema=mic.case_schema(input=str, expected=str))
-    def data() -> object:
-        calls["factory"] += 1
-        return handle
-
-    @mic.eval(name="estimated.eval", dataset=data, output=str, scorers=[])
-    def evaluation(context: mic.TaskContext[str, mic.JsonObject], value: str) -> str:
-        calls["task"] += 1
-        raise AssertionError("estimate must not execute tasks")
-
-    class FakeResolver:
-        async def estimate(self, source: object) -> mic.JsonObject:
-            assert source is handle
-            calls["estimate"] += 1
-            return {"provider": "bigquery", "estimated_bytes_processed": 42, "dry_run": True}
-
-    module = ModuleType("_mic_estimate_fixture")
-    module.data = data
-    module.evaluation = evaluation
-    monkeypatch.setitem(sys.modules, module.__name__, module)
-    monkeypatch.setattr(cli.Resolver, "with_builtin_loaders", FakeResolver)
-    assert cli.main(["estimate", f"{module.__name__}:{symbol}"]) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert result["estimate"]["estimated_bytes_processed"] == 42
-    assert result["tasks_executed"] == result["rows_read"] == 0
-    assert calls == {"factory": 1, "estimate": 1, "task": 0}
-
-
-def test_estimate_unsupported_provider_is_clear() -> None:
+def test_estimate_command_is_not_available() -> None:
     result = invoke("estimate", "examples.triage:triage_data")
     assert result.returncode == 2
-    assert "does not support cost estimation" in result.stderr.lower()
+    assert "invalid choice" in result.stderr

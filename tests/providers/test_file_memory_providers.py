@@ -3,14 +3,15 @@ from pathlib import Path
 
 import pytest
 
+from mic._runtime.sources import open_source
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import ReadLimits
-from mic.providers.files import FileHandle, FileLoader
-from mic.providers.memory import MemoryLoader
+from mic.providers.files import FileHandle
+from mic.sources import RecordError
 
 
 async def file_rows(path: Path, limits: ReadLimits = ReadLimits()):
-    async with FileLoader().open(FileHandle(path), limits=limits) as read:
+    async with open_source(FileHandle(path), limits=limits) as read:
         rows = [row async for row in read.rows()]
         return rows, read.provenance
 
@@ -54,8 +55,9 @@ async def test_json_array_and_custom_columns(tmp_path):
 async def test_jsonl_invalid(tmp_path, content, match):
     path = tmp_path / "bad.jsonl"
     path.write_text(content, encoding="utf-8")
-    with pytest.raises(DatasetError, match=match):
-        await file_rows(path)
+    rows, _ = await file_rows(path)
+    assert isinstance(rows[-1], RecordError)
+    assert match in rows[-1].message
 
 
 @pytest.mark.asyncio
@@ -89,12 +91,11 @@ async def test_file_closes_when_consumer_stops_or_raises(tmp_path):
     path = tmp_path / "cases.jsonl"
     path.write_text('{"input":1}\n{"input":2}', encoding="utf-8")
     with pytest.raises(RuntimeError):
-        async with FileLoader().open(FileHandle(path), limits=ReadLimits()) as read:
+        async with open_source(FileHandle(path), limits=ReadLimits()) as read:
             async for _ in read.rows():
                 break
-            assert not read.stream.closed
             raise RuntimeError("consumer")
-    assert read.stream.closed
+    path.unlink()  # Windows refuses this if the underlying file is still open.
 
 
 @pytest.mark.asyncio
@@ -105,7 +106,7 @@ async def test_memory_sync_async_and_infinite_caps():
         yield {"input": 4}
 
     for source in ([{"input": 3}, {"input": 4}], async_source()):
-        async with MemoryLoader().open(source, limits=ReadLimits()) as read:
+        async with open_source(source, limits=ReadLimits()) as read:
             assert [row async for row in read.rows()] == [{"input": 3}, {"input": 4}]
             with pytest.raises(DatasetError, match="only be iterated once"):
                 _ = [row async for row in read.rows()]
@@ -114,7 +115,7 @@ async def test_memory_sync_async_and_infinite_caps():
         while True:
             yield {"input": 3}
 
-    async with MemoryLoader().open(forever(), limits=ReadLimits(max_rows=2)) as read:
+    async with open_source(forever(), limits=ReadLimits(max_rows=2)) as read:
         with pytest.raises(DatasetError, match="max_rows=2"):
             _ = [row async for row in read.rows()]
 
@@ -123,8 +124,8 @@ async def test_memory_sync_async_and_infinite_caps():
 async def test_memory_rejects_string_or_dict_as_whole_source():
     for value in ("text", {"input": 1}):
         with pytest.raises(ConfigurationError, match="iterable of rows"):
-            async with MemoryLoader().open(value, limits=ReadLimits()):
-                pass
+            async with open_source(value, limits=ReadLimits()) as read:
+                _ = [row async for row in read.rows()]
 
 
 @pytest.mark.asyncio
@@ -147,7 +148,7 @@ async def test_memory_closes_generators_on_prefix_and_validation_failure():
 
     for source in (sync_rows(), async_rows()):
         with pytest.raises(RuntimeError):
-            async with MemoryLoader().open(source, limits=ReadLimits()) as read:
+            async with open_source(source, limits=ReadLimits()) as read:
                 async for _ in read.rows():
                     raise RuntimeError("consumer validation failure")
     assert closed == ["sync", "async"]
@@ -157,7 +158,7 @@ async def test_memory_closes_generators_on_prefix_and_validation_failure():
 async def test_jsonl_prefix_provenance_does_not_claim_full_file_digest(tmp_path):
     path = tmp_path / "cases.jsonl"
     path.write_text('{"input":1}\n{"input":2}\n', encoding="utf-8")
-    async with FileLoader().open(FileHandle(path), limits=ReadLimits()) as read:
+    async with open_source(FileHandle(path), limits=ReadLimits()) as read:
         async for _ in read.rows():
             break
     assert read.provenance["read_complete"] is False

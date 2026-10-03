@@ -10,6 +10,7 @@ def test_top_level_api_is_intentional() -> None:
         "ConfigurationError",
         "Dataset",
         "DatasetError",
+        "DatasetSource",
         "Evaluation",
         "EvaluationSummary",
         "JsonObject",
@@ -19,6 +20,8 @@ def test_top_level_api_is_intentional() -> None:
         "MissingExpectedError",
         "RawCase",
         "ReadLimits",
+        "ReadContext",
+        "RecordError",
         "RequirementResult",
         "RunResult",
         "Schema",
@@ -59,10 +62,10 @@ def test_top_level_api_is_intentional() -> None:
 
 
 def test_extension_contracts_have_explicit_modules() -> None:
-    from mic.providers import DatasetLoader, DatasetRead, Resolver
     from mic.reporters import Reporter
+    from mic.sources import DatasetSource, ReadContext, RecordError
 
-    assert DatasetLoader is not None
-    assert DatasetRead is not None
-    assert Resolver is not None
+    assert DatasetSource is mic.DatasetSource
+    assert ReadContext is mic.ReadContext
+    assert RecordError is mic.RecordError
     assert Reporter is not None

@@ -1,9 +1,7 @@
 """The mic command line uses the same runner as the Python API."""
 
 import argparse
-import asyncio
 import json
-import math
 import sys
 import webbrowser
 from collections.abc import Sequence
@@ -12,10 +10,8 @@ from pathlib import Path
 import mic
 from mic._runtime.artifacts import has_artifact_failure
 from mic._runtime.discovery import list_definitions, resolve_definition
-from mic._runtime.materialization import resolve_source
 from mic.errors import ConfigurationError, DatasetError, MicError
 from mic.models import JsonObject
-from mic.providers import Resolver
 from mic.reporters.braintrust import BraintrustReporter
 from mic.reporters.console import format_summary
 from mic.reporters.html import write_report
@@ -56,11 +52,6 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("selector", help="Exact module:symbol for a dataset or evaluation")
     inspect.add_argument("--limit", type=int, help="Explicitly select only this many source rows")
     _limits(inspect)
-    estimate = commands.add_parser(
-        "estimate", help="Estimate provider read cost without reading rows or executing tasks"
-    )
-    estimate.add_argument("selector", help="Exact module:symbol for a dataset or evaluation")
-    estimate.add_argument("--dataset-timeout", type=float, default=60.0)
     preflight = commands.add_parser(
         "preflight", help="Validate data and configuration; execute no tasks"
     )
@@ -110,22 +101,6 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False))
 
 
-async def _estimate[I, E, M](dataset: mic.Dataset[I, E, M], timeout: float) -> JsonObject:
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ConfigurationError("dataset-timeout must be positive and finite")
-    try:
-        async with asyncio.timeout(timeout):
-            source = await resolve_source(dataset)
-            estimate = await Resolver.with_builtin_loaders().estimate(source)
-        return {"dataset": dataset.name, "estimate": estimate, "rows_read": 0, "tasks_executed": 0}
-    except TimeoutError as exc:
-        raise DatasetError(f"Provider estimate exceeded {timeout} seconds") from exc
-    except MicError:
-        raise
-    except Exception as exc:
-        raise DatasetError(f"Cannot estimate dataset {dataset.name!r}: {exc}") from exc
-
-
 def _execute(args: argparse.Namespace) -> int:
     if args.command == "list":
         rows = [definition for module in args.modules for definition in list_definitions(module)]
@@ -144,13 +119,10 @@ def _execute(args: argparse.Namespace) -> int:
             webbrowser.open(destination.as_uri())
         return 0
     definition = resolve_definition(args.selector)
-    if args.command in ("inspect", "estimate"):
+    if args.command == "inspect":
         dataset = definition.dataset if isinstance(definition, mic.Evaluation) else definition
         if not isinstance(dataset, mic.Dataset):
             raise ConfigurationError(f"{args.command} requires a dataset or evaluation definition")
-        if args.command == "estimate":
-            _print_json(asyncio.run(_estimate(dataset, args.dataset_timeout)))
-            return 0
         _print_json(mic.inspect_dataset(dataset, limit=args.limit, limits=_read_limits(args)))
         return 0
     if not isinstance(definition, mic.Evaluation):

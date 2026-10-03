@@ -3,7 +3,6 @@
 import asyncio
 import json
 import threading
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,27 +10,17 @@ import pytest
 
 import mic
 from mic._runtime.materialization import load_dataset
-from mic.providers import Resolver
 
 
 async def test_provider_digest_does_not_change_fallback_case_identity():
     @dataclass
-    class Handle:
+    class Handle(mic.DatasetSource):
         provider: str = "custom"
 
-    class Read:
-        provenance = {"digest": "physical-source-digest", "provider": "custom"}
-
-        async def rows(self):
+        async def read(self, ctx):
+            ctx.set_provenance(digest="physical-source-digest", provider="custom")
             yield {"input": 1, "expected": 2}
 
-    class Loader:
-        @asynccontextmanager
-        async def open(self, handle, *, limits):
-            yield Read()
-
-    resolver = Resolver()
-    resolver.register(Handle, Loader())
     schema = mic.case_schema(input=int, expected=int)
 
     @mic.dataset(name="custom", schema=schema)
@@ -42,7 +31,7 @@ async def test_provider_digest_does_not_change_fallback_case_identity():
     def memory():
         return [{"input": 1, "expected": 2}]
 
-    provider = await load_dataset(custom, resolver=resolver)
+    provider = await load_dataset(custom)
     local = await load_dataset(memory)
     assert provider.rows == local.rows
     assert provider.summary["digest"] == local.summary["digest"]

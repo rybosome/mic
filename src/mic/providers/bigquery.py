@@ -4,20 +4,20 @@ The client is imported and authenticated only when opening a source. Query value
 are named parameters; callers must provide a stable ORDER BY in their SQL.
 """
 
+from __future__ import annotations
+
 import hashlib
 import importlib
 import json
 import math
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Mapping
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from functools import partial
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import suppress
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from mic.errors import ConfigurationError, DatasetError
-from mic.models import JsonObject, JsonValue, ReadLimits
-
-from ._io import ReadBudget, in_thread, next_item
+from mic.models import JsonObject, JsonValue
+from mic.sources import DatasetSource, ReadContext
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class BigQueryParameter:
 
 
 @dataclass(frozen=True)
-class BigQueryHandle:
+class BigQueryHandle(DatasetSource):
     billing_project: str
     sql: str
     location: str
@@ -43,6 +43,75 @@ class BigQueryHandle:
     parameters: tuple[BigQueryParameter, ...] = ()
     page_size: int = 1000
     timeout: float = 60.0
+    client: BigQueryClient | None = field(default=None, repr=False, compare=False, kw_only=True)
+    client_factory: ClientFactory | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
+    config_factory: ConfigFactory | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
+
+    def read(self, ctx: ReadContext) -> Iterator[object]:
+        _validate(self)
+        config = self.config_factory or _config
+        client = self.client or (self.client_factory or _client)(self)
+        job: QueryJob | None = None
+        exhausted = False
+        try:
+            dry = client.query(
+                self.sql,
+                job_config=config(self, True),
+                location=self.location,
+                timeout=self.timeout,
+            )
+            _check_dry_run(self, dry)
+            ctx.set_provenance(**_provenance(self, dry))
+            job = client.query(
+                self.sql,
+                job_config=config(self, False),
+                location=self.location,
+                timeout=self.timeout,
+            )
+            ctx.set_provenance(job_id=job.job_id)
+            rows = job.result(
+                page_size=min(self.page_size, ctx.limits.max_rows + 1), timeout=self.timeout
+            )
+            for row in rows:
+                if isinstance(row, Mapping):
+                    value = dict(cast(Mapping[str, object], row))
+                else:
+                    # The SDK's Row exposes items() but is not a Mapping.
+                    items = getattr(row, "items", None)
+                    if not callable(items):
+                        raise DatasetError("BigQuery returned a row without column mapping")
+                    value = dict(cast(Iterable[tuple[str, object]], items()))
+                # Preserve native Decimal/datetime/bytes for the user's mapper.
+                # This bounds a decoded representation, not HTTP wire bytes.
+                size = len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8"))
+                ctx.account_bytes(size)
+                ctx.check_record_bytes(size)
+                yield value
+            exhausted = True
+            ctx.set_provenance(
+                total_bytes_processed=job.total_bytes_processed,
+                total_bytes_billed=job.total_bytes_billed,
+                cache_hit=job.cache_hit,
+                raw_bytes=ctx.raw_bytes,
+            )
+        except (DatasetError, ConfigurationError):
+            raise
+        except Exception:
+            # SDK exception text can contain query values and response bodies.
+            raise DatasetError("BigQuery dataset read failed") from None
+        finally:
+            if job is not None and not exhausted:
+                with suppress(Exception):
+                    job.cancel()
+            if self.client is None:
+                try:
+                    client.close()
+                except Exception:
+                    raise DatasetError("BigQuery client cleanup failed") from None
 
 
 class QueryJob(Protocol):
@@ -52,7 +121,7 @@ class QueryJob(Protocol):
     job_id: str
     cache_hit: bool | None
 
-    def result(self, *, page_size: int, timeout: float) -> Iterable[Mapping[str, object]]: ...
+    def result(self, *, page_size: int, timeout: float) -> Iterable[object]: ...
 
     def cancel(self) -> bool: ...
 
@@ -182,147 +251,3 @@ def _check_dry_run(handle: BigQueryHandle, job: QueryJob) -> None:
             f"BigQuery dry run estimates {estimated} bytes, exceeding "
             f"maximum_bytes_billed={handle.maximum_bytes_billed}"
         )
-
-
-@dataclass
-class _BigQueryRead:
-    job: QueryJob
-    handle: BigQueryHandle
-    limits: ReadLimits
-    provenance: JsonObject
-    used: bool = False
-
-    async def rows(self) -> AsyncIterator[object]:
-        if self.used:
-            raise DatasetError("BigQuery: a read may only be iterated once")
-        self.used = True
-        budget = ReadBudget(self.limits, "BigQuery")
-        try:
-            result = await in_thread(
-                partial(
-                    self.job.result,
-                    page_size=min(self.handle.page_size, self.limits.max_rows + 1),
-                    timeout=self.handle.timeout,
-                )
-            )
-            iterator = iter(result)
-            while True:
-                present, row = await in_thread(lambda: next_item(iterator))
-                if not present:
-                    break
-                if not isinstance(row, Mapping):
-                    # google.cloud.bigquery.Row has .items() but is not a Mapping.
-                    items = getattr(row, "items", None)
-                    if not callable(items):
-                        raise DatasetError("BigQuery returned a row without column mapping")
-                    value = dict(cast(Iterable[tuple[str, object]], items()))
-                else:
-                    value = dict(row)
-                # SDK-native datetime/Decimal/bytes values remain untouched for map_row.
-                # This is a raw-read budget; the materializer checks canonical JSON too.
-                size = len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8"))
-                budget.add_bytes(size)
-                budget.add_row(size)
-                yield value
-            self.provenance.update(
-                {
-                    "job_id": self.job.job_id,
-                    "total_bytes_processed": self.job.total_bytes_processed,
-                    "total_bytes_billed": self.job.total_bytes_billed,
-                    "cache_hit": self.job.cache_hit,
-                    "raw_bytes": budget.bytes,
-                }
-            )
-        except DatasetError:
-            raise
-        except Exception as exc:
-            raise DatasetError(f"BigQuery result read failed: {exc}") from exc
-
-
-class BigQueryLoader:
-    """Inject ``client`` and ``config_factory`` for SDK-free contract tests.
-
-    Injected clients remain caller-owned. Clients produced by ``client_factory``
-    are owned and always closed, including validation and query failures.
-    """
-
-    def __init__(
-        self,
-        *,
-        client: BigQueryClient | None = None,
-        client_factory: ClientFactory = _client,
-        config_factory: ConfigFactory = _config,
-    ) -> None:
-        self._client = client
-        self._client_factory = client_factory
-        self._config_factory = config_factory
-
-    async def _dry_run(self, client: BigQueryClient, handle: BigQueryHandle) -> QueryJob:
-        config = self._config_factory(handle, True)
-        job = await in_thread(
-            partial(
-                client.query,
-                handle.sql,
-                job_config=config,
-                location=handle.location,
-                timeout=handle.timeout,
-            )
-        )
-        _check_dry_run(handle, job)
-        return job
-
-    async def estimate(self, handle: BigQueryHandle) -> JsonObject:
-        """Dry-run cost metadata; never submit an executable query."""
-        _validate(handle)
-        client = self._client or await in_thread(
-            lambda: self._client_factory(handle), on_cancel=lambda created: created.close()
-        )
-        try:
-            return _provenance(handle, await self._dry_run(client, handle))
-        except (DatasetError, ConfigurationError):
-            raise
-        except Exception as exc:
-            raise DatasetError(f"BigQuery dry run failed: {exc}") from exc
-        finally:
-            if self._client is None:
-                await in_thread(client.close)
-
-    @asynccontextmanager
-    async def open(
-        self, handle: BigQueryHandle, *, limits: ReadLimits
-    ) -> AsyncGenerator[_BigQueryRead]:
-        _validate(handle)
-        client = self._client or await in_thread(
-            lambda: self._client_factory(handle), on_cancel=lambda created: created.close()
-        )
-        job: QueryJob | None = None
-        completed = False
-        try:
-            dry_job = await self._dry_run(client, handle)
-            provenance = _provenance(handle, dry_job)
-            config = self._config_factory(handle, False)
-            job = await in_thread(
-                partial(
-                    client.query,
-                    handle.sql,
-                    job_config=config,
-                    location=handle.location,
-                    timeout=handle.timeout,
-                ),
-                on_cancel=lambda submitted: submitted.cancel(),
-            )
-            provenance["job_id"] = job.job_id
-            yield _BigQueryRead(job, handle, limits, provenance)
-            completed = True
-        except (DatasetError, ConfigurationError):
-            raise
-        except Exception as exc:
-            raise DatasetError(f"BigQuery dataset read failed: {exc}") from exc
-        finally:
-            if not completed and job is not None:
-                try:
-                    await in_thread(job.cancel)
-                except Exception:
-                    pass  # Preserve the original read failure; cancellation is best effort.
-            if self._client is None:
-                await in_thread(client.close)

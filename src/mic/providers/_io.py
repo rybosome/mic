@@ -4,11 +4,10 @@ import asyncio
 import json
 import math
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 from typing import cast
 
 from mic.errors import DatasetError
-from mic.models import JsonValue, ReadLimits
+from mic.models import JsonValue
 
 from .._async import drain
 
@@ -27,7 +26,7 @@ def parse_json(data: bytes, source: str) -> JsonValue:
         result: dict[str, JsonValue] = {}
         for key, value in pairs:
             if key in result:
-                raise ValueError(f"duplicate object key {key!r}")
+                raise ValueError("duplicate object key")
             result[key] = value
         return result
 
@@ -43,29 +42,6 @@ def parse_json(data: bytes, source: str) -> JsonValue:
         )
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise DatasetError(f"{source}: invalid JSON: {exc}") from exc
-
-
-@dataclass
-class ReadBudget:
-    limits: ReadLimits
-    source: str
-    rows: int = 0
-    bytes: int = 0
-
-    def add_bytes(self, size: int) -> None:
-        self.bytes += size
-        if self.bytes > self.limits.max_bytes:
-            raise DatasetError(f"{self.source}: max_bytes={self.limits.max_bytes} exceeded")
-
-    def add_row(self, size: int | None = None) -> None:
-        self.rows += 1
-        if self.rows > self.limits.max_rows:
-            raise DatasetError(f"{self.source}: max_rows={self.limits.max_rows} exceeded")
-        if size is not None and size > self.limits.max_record_bytes:
-            raise DatasetError(
-                f"{self.source}: row {self.rows}: "
-                f"max_record_bytes={self.limits.max_record_bytes} exceeded"
-            )
 
 
 def next_item[T](iterator: Iterator[T]) -> tuple[bool, T | None]:

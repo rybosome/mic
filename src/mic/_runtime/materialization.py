@@ -10,8 +10,9 @@ from typing import cast
 from .._async import drain, run_sync
 from ..errors import ConfigurationError, DatasetError
 from ..models import MISSING, Dataset, JsonObject, JsonValue, Missing, RawCase, ReadLimits
-from ..providers.base import Resolver
+from ..sources import RecordError
 from .contracts import Case
+from .sources import open_source
 from .validation import (
     describe,
     dumps,
@@ -83,7 +84,6 @@ async def load_dataset[I, E, M](
     dataset: Dataset[I, E, M],
     *,
     limits: ReadLimits | None = None,
-    resolver: Resolver | None = None,
     limit: int | None = None,
 ) -> DatasetSnapshot[I, E, M]:
     nonempty("dataset name", dataset.name)
@@ -92,7 +92,6 @@ async def load_dataset[I, E, M](
     if limit is not None:
         positive_integer("limit", limit)
     caps = limits or ReadLimits()
-    registry = resolver or Resolver.with_builtin_loaders()
     cases: list[Case[I, E, M]] = []
     rows: list[JsonObject] = []
     ids: set[str] = set()
@@ -109,11 +108,13 @@ async def load_dataset[I, E, M](
     try:
         async with asyncio.timeout(caps.timeout_seconds):
             source = await resolve_source(dataset)
-            async with registry.open(source, limits=caps) as read:
+            async with open_source(source, limits=caps) as read:
                 source_info = json_object(read.provenance)
                 iterator = read.rows()
                 try:
                     async for raw in iterator:
+                        if isinstance(raw, RecordError):
+                            raise DatasetError(raw.message)
                         if row_index >= caps.max_rows:
                             raise DatasetError(
                                 f"Dataset exceeds max_rows={caps.max_rows}; no tasks started"
@@ -202,9 +203,8 @@ async def ainspect_dataset[I, E, M](
     *,
     limit: int | None = None,
     limits: ReadLimits | None = None,
-    resolver: Resolver | None = None,
 ) -> JsonObject:
-    snapshot = await load_dataset(dataset, limits=limits, resolver=resolver, limit=limit)
+    snapshot = await load_dataset(dataset, limits=limits, limit=limit)
     return {"dataset": snapshot.summary, "rows": cast(list[JsonValue], snapshot.rows)}
 
 
@@ -213,10 +213,9 @@ def inspect_dataset[I, E, M](
     *,
     limit: int | None = None,
     limits: ReadLimits | None = None,
-    resolver: Resolver | None = None,
 ) -> JsonObject:
     return run_sync(
         "mic.inspect_dataset()",
         "mic.ainspect_dataset",
-        lambda: ainspect_dataset(dataset, limit=limit, limits=limits, resolver=resolver),
+        lambda: ainspect_dataset(dataset, limit=limit, limits=limits),
     )

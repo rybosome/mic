@@ -10,26 +10,56 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from mic.errors import ConfigurationError, DatasetError
-from mic.models import MISSING, JsonObject, RawCase, ReadLimits
+from mic.models import MISSING, JsonObject, RawCase
+from mic.sources import DatasetSource, ReadContext
 
 from ._braintrust.transport import ReadClient as ReadClient
 from ._braintrust.transport import ReadResponse as ReadResponse
 from ._braintrust.transport import create_client
-from ._io import ReadBudget, parse_json
+from ._io import parse_json
 
 
 @dataclass(frozen=True)
-class BraintrustHandle:
+class BraintrustHandle(DatasetSource):
     dataset_id: str
     xact_id: str
     api_url: str | None = None
     page_size: int = 100
     timeout: float = 30.0
+    api_key: str | None = field(default=None, repr=False, compare=False, kw_only=True)
+    client: ReadClient | None = field(default=None, repr=False, compare=False, kw_only=True)
+    transport: object | None = field(default=None, repr=False, compare=False, kw_only=True)
+
+    async def read(self, ctx: ReadContext) -> AsyncIterator[object]:
+        if self.client is not None and self.transport is not None:
+            raise ConfigurationError("provide a Braintrust client or transport, not both")
+        api_url, key = _settings(self, self.api_key)
+        ctx.set_provenance(
+            provider="braintrust",
+            dataset_id=self.dataset_id,
+            xact_id=self.xact_id,
+            api_url=api_url,
+            page_size=self.page_size,
+        )
+        client = self.client or create_client(api_url, key, httpx_transport=self.transport)
+        reader = _BraintrustRead(client, self, api_url, key, ctx)
+        iterator = reader.rows()
+        try:
+            async for row in iterator:
+                yield row
+        finally:
+            try:
+                await iterator.aclose()
+            finally:
+                if self.client is None:
+                    try:
+                        await client.aclose()
+                    except Exception:
+                        raise DatasetError("Braintrust client cleanup failed") from None
 
 
 def _settings(handle: BraintrustHandle, configured_key: str | None) -> tuple[str, str]:
@@ -63,7 +93,7 @@ def _settings(handle: BraintrustHandle, configured_key: str | None) -> tuple[str
         )
     key = configured_key or os.environ.get("BRAINTRUST_API_KEY")
     if not key or not key.strip():
-        raise ConfigurationError("Braintrust requires BRAINTRUST_API_KEY or loader api_key")
+        raise ConfigurationError("Braintrust requires BRAINTRUST_API_KEY or source api_key")
     key = key.strip()
     if any(ord(character) < 33 or ord(character) > 126 for character in key):
         # HTTP client's InvalidHeader error can include the complete token value.
@@ -77,9 +107,7 @@ class _BraintrustRead:
     handle: BraintrustHandle
     api_url: str
     key: str = field(repr=False)
-    limits: ReadLimits
-    provenance: JsonObject
-    used: bool = False
+    ctx: ReadContext
 
     def _query(self, cursor: str | None, limit: int) -> JsonObject:
         # A structured query keeps all provider identifiers/cursors as literals.
@@ -100,14 +128,16 @@ class _BraintrustRead:
             "version": self.handle.xact_id,
         }
 
-    def _row(self, data: bytes, budget: ReadBudget, page: int) -> RawCase:
-        budget.add_row(len(data))
-        raw = parse_json(data, f"Braintrust page {page}, row {budget.rows}")
+    def _row(self, data: bytes, page: int) -> RawCase:
+        self.ctx.check_record_bytes(len(data))
+        raw = parse_json(data, f"Braintrust page {page}, row {self.ctx.rows_seen}")
         if not isinstance(raw, dict) or "input" not in raw:
-            raise DatasetError(f"Braintrust row {budget.rows}: expected an object containing input")
+            raise DatasetError(
+                f"Braintrust row {self.ctx.rows_seen}: expected an object containing input"
+            )
         record_id = raw.get("id")
         if not isinstance(record_id, str) or not record_id:
-            raise DatasetError(f"Braintrust row {budget.rows}: missing physical record id")
+            raise DatasetError(f"Braintrust row {self.ctx.rows_seen}: missing physical record id")
         provenance: JsonObject = {
             "provider": "braintrust",
             "dataset_id": self.handle.dataset_id,
@@ -125,19 +155,16 @@ class _BraintrustRead:
             provenance=provenance,
         )
 
-    async def rows(self) -> AsyncIterator[object]:
-        if self.used:
-            raise DatasetError("Braintrust: a read may only be iterated once")
-        self.used = True
-        budget = ReadBudget(self.limits, "Braintrust")
-        seen_cursors: set[str] = set()
+    async def rows(self) -> AsyncGenerator[object]:
         cursor: str | None = None
         page = 0
         try:
             while True:
                 page += 1
                 # Fetch one extra row at the cap to distinguish completion from truncation.
-                page_limit = min(self.handle.page_size, self.limits.max_rows - budget.rows + 1)
+                page_limit = min(
+                    self.handle.page_size, self.ctx.limits.max_rows - self.ctx.rows_seen + 1
+                )
                 rows_in_page = 0
                 async with self.client.stream(
                     "POST",
@@ -154,11 +181,11 @@ class _BraintrustRead:
                     next_cursor = response.headers.get("x-bt-cursor") or response.headers.get(
                         "x-amz-meta-bt_cursor"
                     )
-                    if next_cursor is not None and next_cursor in seen_cursors:
+                    if next_cursor is not None and next_cursor == cursor:
                         raise DatasetError(f"Braintrust repeated pagination cursor on page {page}")
                     buffer = bytearray()
                     async for chunk in response.aiter_bytes(chunk_size=8192):
-                        budget.add_bytes(len(chunk))
+                        self.ctx.account_bytes(len(chunk))
                         buffer.extend(chunk)
                         while True:
                             end = buffer.find(b"\n")
@@ -173,18 +200,18 @@ class _BraintrustRead:
                                 raise DatasetError(
                                     "Braintrust server exceeded requested page limit"
                                 )
-                            yield self._row(data, budget, page)
-                        if len(buffer) > self.limits.max_record_bytes:
+                            yield self._row(data, page)
+                        if len(buffer) > self.ctx.limits.max_record_bytes:
                             raise DatasetError(
                                 f"Braintrust page {page}: "
-                                f"max_record_bytes={self.limits.max_record_bytes} exceeded"
+                                f"max_record_bytes={self.ctx.limits.max_record_bytes} exceeded"
                             )
                     if buffer.strip():
                         rows_in_page += 1
                         if rows_in_page > page_limit:
                             raise DatasetError("Braintrust server exceeded requested page limit")
-                        yield self._row(bytes(buffer), budget, page)
-                self.provenance.update({"pages": page, "raw_bytes": budget.bytes})
+                        yield self._row(bytes(buffer), page)
+                self.ctx.set_provenance(pages=page, raw_bytes=self.ctx.raw_bytes)
                 if rows_in_page == 0:
                     if next_cursor:
                         raise DatasetError(
@@ -195,54 +222,8 @@ class _BraintrustRead:
                     # Documented JSONL pagination provides a cursor on nonempty pages.
                     # A proxy dropping that header must not silently truncate a dataset.
                     raise DatasetError("Braintrust nonempty page is missing its pagination cursor")
-                seen_cursors.add(next_cursor)
                 cursor = next_cursor
         except DatasetError:
             raise
-        except Exception as exc:
-            raise DatasetError(f"Braintrust read failed on page {page}: {exc}") from exc
-
-
-class BraintrustLoader:
-    """Lazily read a pinned dataset. Injected HTTP clients remain caller-owned."""
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        client: ReadClient | None = None,
-        transport: object | None = None,
-    ) -> None:
-        if client is not None and transport is not None:
-            raise ConfigurationError("provide a Braintrust client or transport, not both")
-        self._api_key = api_key
-        self._client = client
-        self._transport = transport
-
-    @asynccontextmanager
-    async def open(
-        self, handle: BraintrustHandle, *, limits: ReadLimits
-    ) -> AsyncGenerator[_BraintrustRead]:
-        api_url, key = _settings(handle, self._api_key)
-        if self._client is not None:
-            client = self._client
-        else:
-            client = create_client(api_url, key, httpx_transport=self._transport)
-        try:
-            yield _BraintrustRead(
-                client,
-                handle,
-                api_url,
-                key,
-                limits,
-                {
-                    "provider": "braintrust",
-                    "dataset_id": handle.dataset_id,
-                    "xact_id": handle.xact_id,
-                    "api_url": api_url,
-                    "page_size": handle.page_size,
-                },
-            )
-        finally:
-            if self._client is None:
-                await client.aclose()
+        except Exception:
+            raise DatasetError(f"Braintrust read failed on page {page}") from None

@@ -13,12 +13,14 @@ Cloud setup/mutation belongs to the fixture owner, never to source adapters.
 
 import json
 import os
+from functools import partial
 
 import pytest
 
 from mic.models import ReadLimits
-from mic.providers.bigquery import BigQueryHandle, BigQueryLoader
-from mic.providers.braintrust import BraintrustHandle, BraintrustLoader
+from mic.providers.bigquery import BigQueryHandle
+from mic.providers.braintrust import BraintrustHandle
+from tests.providers.helpers import open_bigquery, open_braintrust
 
 
 def required(name):
@@ -41,7 +43,9 @@ async def test_live_bigquery_bounded_ordered_fixture(record_property):
         maximum_bytes_billed=int(required("MIC_BIGQUERY_MAX_BYTES")),
         page_size=1,
     )
-    async with BigQueryLoader().open(source, limits=ReadLimits(max_rows=100)) as read:
+    async with partial(
+        open_bigquery,
+    )(source, limits=ReadLimits(max_rows=100)) as read:
         rows = [row async for row in read.rows()]
         assert len(rows) >= 2, "fixture must have >=2 rows to exercise pages"
         assert read.provenance["job_id"]
@@ -62,7 +66,9 @@ async def test_live_braintrust_pinned_multi_page_repeat(record_property):
     )
     snapshots = []
     for _ in range(2):
-        async with BraintrustLoader().open(source, limits=ReadLimits(max_rows=100)) as read:
+        async with partial(
+            open_braintrust,
+        )(source, limits=ReadLimits(max_rows=100)) as read:
             rows = [row async for row in read.rows()]
             assert len(rows) >= 2, "fixture must have >=2 records to exercise pagination"
             assert read.provenance["pages"] >= 3
