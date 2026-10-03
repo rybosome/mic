@@ -58,8 +58,6 @@ or prefix-selection flag.
 | `--max-executions` | `preflight`, `run` | 50,000; cap on cases × trials. |
 | `--timeout` | `run` | Unset; cooperative per-trial deadline in seconds, covering task and scorers. |
 | `--max-rows` | `inspect`, `preflight`, `run` | 10,000 rows. |
-| `--max-bytes` | `inspect`, `preflight`, `run` | 67,108,864 bytes. |
-| `--max-record-bytes` | `inspect`, `preflight`, `run` | 1,048,576 bytes per record. |
 | `--dataset-timeout` | `inspect`, `preflight`, `run` | 60 seconds cumulative active source reading/mapping time, excluding downstream waiting. |
 
 Safety caps fail visibly instead of silently truncating the dataset. Use
@@ -67,8 +65,9 @@ Safety caps fail visibly instead of silently truncating the dataset. Use
 `run --on-invalid skip` skips recognized row mapping/schema errors; default `abort`
 stops admission. Transport/iterator errors and caps always fail. Previously admitted
 trials finish; an empty or all-rejected evaluation fails.
-See [provider limits](providers.md#shared-limits-and-identity) for raw and
-normalized size accounting.
+There is no dataset or per-record byte cap. See
+[provider limits](providers.md#shared-limits-and-identity) for memory implications.
+The separate `report --max-bytes` cap still bounds evidence loaded for HTML rendering.
 
 Timeouts are cooperative, not hard process-kill deadlines. Already-running
 synchronous calls cannot be forcibly stopped; Mic waits for in-flight work

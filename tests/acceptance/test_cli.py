@@ -21,6 +21,22 @@ def invoke(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.parametrize("command", ["inspect", "preflight", "run"])
+def test_dataset_commands_expose_only_row_and_time_read_limits(command):
+    result = invoke(command, "--help")
+    assert result.returncode == 0
+    assert "--max-rows" in result.stdout
+    assert "--dataset-timeout" in result.stdout
+    assert "--max-bytes" not in result.stdout
+    assert "--max-record-bytes" not in result.stdout
+
+
+def test_report_retains_its_independent_byte_cap():
+    result = invoke("report", "--help")
+    assert result.returncode == 0
+    assert "--max-bytes" in result.stdout
+
+
 def test_list_inspect_and_preflight() -> None:
     listing = invoke("list", "examples.triage", "--json")
     assert listing.returncode == 0, listing.stderr

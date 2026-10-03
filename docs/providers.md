@@ -26,12 +26,14 @@ for what is embedded in reports and sent during optional export.
 
 ## Shared limits and identity
 
-`ReadLimits` defaults to `max_rows=10_000`, `max_bytes=67_108_864`,
-`max_record_bytes=1_048_576`, and `timeout_seconds=60`. Exceeding a safety cap fails
+`ReadLimits` defaults to `max_rows=10_000` and `timeout_seconds=60`.
+Exceeding a safety cap fails
 source admission; it never selects an implicit prefix. Already-admitted work finishes. `mic
 inspect ... --limit N` and `inspect_dataset(..., limit=N)` deliberately select a
-prefix (default: 20 records). The source adapters check raw sizes where available, and the reader
-also checks the normalized, serialized case sizes.
+prefix (default: 20 records). There is no total dataset or per-record byte limit.
+The pipeline bounds the number of in-flight records, not their size: each record
+must fit in memory, and parsers/SDKs may allocate additional buffers. Providers
+may impose their own input-size policies when appropriate.
 `inspect_dataset` is blocking; async hosts use `await ainspect_dataset(...)`.
 
 Rows normally contain `input`, optional `expected`, optional object-shaped
@@ -76,8 +78,8 @@ FileHandle("fixtures/cases.json", format="json")
 
 `FileHandle(path, format=None)` accepts `Path` or string. `.jsonl` and `.ndjson`
 extensions select JSONL; other paths default to a JSON array. An explicit format
-is either `"json"` or `"jsonl"`. JSONL is read one bounded line at a time. A JSON
-array is framed and parsed one bounded record at a time, without loading the whole array.
+is either `"json"` or `"jsonl"`. JSONL is read one line at a time. A JSON
+array is framed and parsed one record at a time, without loading the whole array.
 
 Blank JSONL lines are skipped. Malformed JSON, duplicate object keys, nonfinite
 numbers, non-object rows, and invalid source provenance are record errors.
@@ -129,7 +131,8 @@ row selection and is not a BigQuery scan-cost guarantee. Supply a deterministic,
 unique ordering key; the adapter does not attempt to prove SQL ordering.
 
 Rows remain raw column mappings, including SDK-native datetime/Decimal/bytes
-values, for your mapper. Provenance includes SQL, named parameter values, billing
+values, for your mapper. A returned row with no column mapping is a recoverable
+record rejection; SDK/transport exceptions remain fatal. Provenance includes SQL, named parameter values, billing
 project/location, a stable query identity hash, dry-run estimate, job ID, and
 available actual processing/billing/cache metadata. Query values are evidence;
 do not put credentials in SQL parameters.
@@ -196,7 +199,11 @@ cursor, an empty page with a cursor, or a response exceeding its requested page
 limit fails explicitly. The adapter probes for an extra row when the configured
 row cap is reached, distinguishing a complete dataset from silent truncation.
 Cursor tracking uses constant space; longer cursor cycles are ultimately bounded
-by the row/byte/deadline caps rather than retaining every historical cursor.
+by the row/deadline caps rather than retaining every historical cursor.
+
+Malformed JSONL records, missing inputs, and missing physical IDs yield a
+recoverable record error at the known line boundary. Run policy decides abort or
+skip; resource limits and pagination/transport failures always abort the source.
 
 Records preserve input, expected presence/null, metadata, and physical record ID.
 Provenance retains dataset ID, pinned version, physical record ID, and returned
@@ -253,7 +260,7 @@ uv run --extra braintrust pytest tests/integration/test_live_providers.py \
 Absent opt-in means skipped. Opted-in tests with missing required fixture config
 fail. JUnit properties capture provider provenance. The Braintrust test compares
 two pinned reads. A fixture-owner-driven change between runs and an explicit
-reporter export remain separate acceptance checks; these read-only tests never
+sink export remain separate acceptance checks; these read-only tests never
 modify source data.
 
 ### SDK deadline behavior
@@ -304,16 +311,12 @@ exceptions and limits always fail.
 `ReadContext.limits` exposes the read caps. `set_provenance(**values)` validates
 and copies finite JSON; cumulative provenance is limited to 64 KiB. The context
 counts raw rows centrally, independently of provider implementation. Providers
-can call `account_bytes(n)` and `check_record_bytes(n)` for physical/decoded size
-checks. These do not claim to measure HTTP wire bytes. Normalized case sizes are
-also checked centrally.
-
-`ctx.open_binary(path)` owns a file and accounts bytes as read. Its digest is
-explicitly a consumed prefix until EOF is observed. A parser can read ahead of
-the last yielded record, so this digest is not a logical dataset digest.
+open files and clients using ordinary Python APIs and own their cleanup; no
+byte accounting or Mic-specific file wrapper is required. File-byte digests are
+an implementation detail of the built-in file provider, not a source obligation.
 
 See [the YAML example](../examples/yaml_source.py) for a multi-document source
 with resource cleanup, duplicate-key/alias rejection, and bounded nesting. YAML
 is an example dependency, not a core or provider extra. Each YAML document is
-parsed in memory; total raw bytes remain capped, and Mic validates each yielded
-record. It is not a general-purpose sandbox for hostile YAML.
+parsed in memory, and Mic validates each yielded record. It is not a
+general-purpose sandbox for hostile YAML.

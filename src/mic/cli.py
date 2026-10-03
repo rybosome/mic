@@ -18,8 +18,6 @@ from mic.sinks.braintrust import BraintrustSink
 
 def _limits(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-rows", type=int, default=10_000)
-    parser.add_argument("--max-bytes", type=int, default=64 * 1024 * 1024)
-    parser.add_argument("--max-record-bytes", type=int, default=1024 * 1024)
     parser.add_argument(
         "--dataset-timeout",
         type=float,
@@ -78,8 +76,6 @@ def build_parser() -> argparse.ArgumentParser:
 def _read_limits(args: argparse.Namespace) -> mic.ReadLimits:
     return mic.ReadLimits(
         max_rows=args.max_rows,
-        max_bytes=args.max_bytes,
-        max_record_bytes=args.max_record_bytes,
         timeout_seconds=args.dataset_timeout,
     )
 

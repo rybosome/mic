@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 import pytest
 
 import mic
-from mic.results import SinkReceipt
+from mic.results import Failure, SinkReceipt
 from mic.sinks import CaseAccepted, TrialFinished
 
 from .helpers import evaluation, row
@@ -53,6 +53,18 @@ def test_no_output_means_no_files_and_no_case_collection(tmp_path, monkeypatch) 
     assert not hasattr(result, "cases")
     assert list(tmp_path.iterdir()) == []
     assert result.summary.trials.completed == 1
+
+
+def test_dataset_can_exceed_former_record_and_total_byte_caps() -> None:
+    # Reuse the payload, but stream >64 MiB of logical input through real validation.
+    payload = "x" * (1024 * 1024 + 1)
+    records = ({"input": payload, "expected": len(payload)} for _ in range(65))
+    result = mic.run(evaluation(records, task=lambda value: len(value), output=int))
+    assert result.exit_code == 0
+    assert result.summary.trials.completed == 65
+    assert result.summary.tasks["runtime"].scores["exact"].mean == 1
+    assert next(iter(result.sources.values())).exhausted
+    assert result.output_dir is None
 
 
 async def test_tasks_and_scoring_start_before_source_exhaustion() -> None:
@@ -392,7 +404,9 @@ def test_synchronous_sink_factory_failure_has_a_receipt_and_closes_prior_sinks()
     assert result.summary.trials.planned == 0
 
 
-@pytest.mark.parametrize("details", [[], {"bad": float("nan")}, {"large": "x" * 65537}])
+@pytest.mark.parametrize(
+    "details", [[], {"bad": float("nan")}, {"large": "x" * 65537}, {"unicode": "🎤" * 20000}]
+)
 def test_invalid_sink_receipt_is_failure_not_a_corrupt_manifest(details, tmp_path):
     class Invalid(Capture):
         async def finish(self, outcome):
@@ -404,3 +418,30 @@ def test_invalid_sink_receipt_is_failure_not_a_corrupt_manifest(details, tmp_pat
     assert result.exit_code == 1
     assert result.sinks[-1].error.phase == "sink_finish"
     assert json.loads((tmp_path / "run.json").read_text()) == result.to_json()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        Failure("phase", "type", "x" * 65537),
+        Failure("phase", "", "message"),
+    ],
+)
+def test_receipt_error_must_fit_the_bounded_serializable_contract(error):
+    class Invalid(Capture):
+        async def finish(self, outcome):
+            return SinkReceipt(self.name, "failed", error=error)
+
+    result = mic.run(evaluation([row()]), sinks=[Invalid()])
+    assert result.exit_code == 1
+    assert result.sinks[-1].error.phase == "sink_finish"
+
+
+def test_read_cap_records_consumed_probe_and_effective_source_limits():
+    result = mic.run(evaluation([row(), row(2)]), limits=mic.ReadLimits(max_rows=1))
+    source_id, source = next(iter(result.sources.items()))
+    assert result.exit_code == 2
+    assert source.records_seen == 2
+    assert source.records_accepted == 1 and source.records_rejected == 0
+    assert result.info.tasks["runtime"]["source_id"] == source_id
+    assert result.info.tasks["runtime"]["limits"]["max_rows"] == 1

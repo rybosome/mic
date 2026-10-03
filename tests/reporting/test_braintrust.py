@@ -60,7 +60,7 @@ class FakeSDK:
         return self.experiment
 
 
-async def prepared_reporter(sdk: object, *, project: str = "test") -> BraintrustSink:
+async def prepared_sink(sdk: object, *, project: str = "test") -> BraintrustSink:
     sink = BraintrustSink(project=project, sdk=sdk)
     await sink.prepare()
     return sink
@@ -84,10 +84,10 @@ async def test_braintrust_prepare_is_read_only_and_report_preserves_evidence() -
     manifest, cases = sample()
     before = copy.deepcopy(cases)
     sdk = FakeSDK()
-    reporter = BraintrustSink(project="test", sdk=sdk)
-    await reporter.prepare()
+    sink = BraintrustSink(project="test", sdk=sdk)
+    await sink.prepare()
     assert sdk.calls == []
-    result = await export(reporter, manifest, cases)
+    result = await export(sink, manifest, cases)
     assert result.status == "completed"
     assert result.details["rows"] == 2
     assert sdk.calls[0]["set_current"] is False
@@ -114,23 +114,23 @@ async def test_braintrust_invalid_score_fails_before_experiment_creation(value: 
     manifest, cases = sample()
     cases[0]["scores"] = [{"name": "cost", "value": value}]  # type: ignore[assignment]
     sdk = FakeSDK()
-    reporter = await prepared_reporter(sdk)
+    sink = await prepared_sink(sdk)
     with pytest.raises(ConfigurationError, match="only accepts scores"):
-        await export(reporter, manifest, cases)
+        await export(sink, manifest, cases)
     assert sdk.calls == []
 
 
 async def test_flush_failure_is_not_success() -> None:
     manifest, cases = sample()
     sdk = FakeSDK(fail_flush=True)
-    reporter = await prepared_reporter(sdk)
+    sink = await prepared_sink(sdk)
     with pytest.raises(ConnectionError, match="flush failure"):
-        await export(reporter, manifest, cases)
+        await export(sink, manifest, cases)
     assert len(sdk.calls) == 1
     assert len(sdk.experiment.spans) == 1
 
 
-async def test_reporter_requires_credentials_without_initializing_sdk(
+async def test_sink_requires_credentials_without_initializing_sdk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
@@ -149,7 +149,7 @@ def test_installed_braintrust_sdk_preserves_projection_in_namespaced_evidence(
     )
     from braintrust.util import LazyValue
 
-    from mic.sinks.braintrust import _events
+    from mic.sinks.braintrust import _event
 
     def no_network(*args: object, **kwargs: object) -> None:
         raise AssertionError("SDK projection contract must not access the network")
@@ -162,7 +162,13 @@ def test_installed_braintrust_sdk_preserves_projection_in_namespaced_evidence(
     experiment = logger.Experiment(lazy_metadata=LazyValue(lambda: metadata, use_mutex=False))
     manifest, cases = sample()
     with logger._internal_with_memory_background_logger() as memory:
-        for index, event in enumerate(_events(manifest, cases)):
+        for index, case in enumerate(cases):
+            event = _event(
+                manifest["run_id"],
+                TrialFinished(
+                    "test", "source", case["row_index"], case["trial"], case["case_id"], case
+                ),
+            )
             span = experiment.start_span(name="case", id=str(index), set_current=False)
             span.log(**event)
             span.end()
@@ -196,11 +202,11 @@ def test_installed_sdk_synchronous_export_state_is_owned_and_offline(
     assert state is not sdk.logger._state
 
 
-async def test_reporter_flushes_bounded_batches() -> None:
+async def test_sink_flushes_each_trial_without_batch_retention() -> None:
     manifest, cases = sample()
     sdk = FakeSDK()
-    reporter = await prepared_reporter(sdk)
-    await export(reporter, manifest, cases * 101)
+    sink = await prepared_sink(sdk)
+    await export(sink, manifest, cases * 101)
     assert len(sdk.experiment.spans) == 202
     assert sdk.experiment.flushes == 202
 
@@ -227,7 +233,7 @@ def test_installed_sdk_sync_mode_raises_failed_upload_without_network() -> None:
         )
 
 
-async def test_reporter_cancellation_drains_upload_thread() -> None:
+async def test_sink_cancellation_drains_upload_thread() -> None:
     import asyncio
     import threading
 
@@ -242,8 +248,8 @@ async def test_reporter_cancellation_drains_upload_thread() -> None:
 
     manifest, cases = sample()
     sdk = BlockingSDK()
-    reporter = await prepared_reporter(sdk)
-    task = asyncio.create_task(export(reporter, manifest, cases))
+    sink = await prepared_sink(sdk)
+    task = asyncio.create_task(export(sink, manifest, cases))
     try:
         assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
@@ -269,9 +275,9 @@ async def test_malformed_projection_fails_before_any_remote_write(scores: object
     manifest, cases = sample()
     cases[0]["scores"] = scores
     sdk = FakeSDK()
-    reporter = await prepared_reporter(sdk)
+    sink = await prepared_sink(sdk)
     with pytest.raises(ConfigurationError):
-        await export(reporter, manifest, cases)
+        await export(sink, manifest, cases)
     assert sdk.calls == []
 
 
@@ -287,8 +293,8 @@ async def test_sdk_payload_mutation_cannot_change_local_evidence(
         event["scores"]["exact"] = 1
 
     monkeypatch.setattr(FakeSpan, "log", mutate)
-    reporter = await prepared_reporter(FakeSDK())
-    await export(reporter, manifest, cases)
+    sink = await prepared_sink(FakeSDK())
+    await export(sink, manifest, cases)
     assert (manifest, cases) == original
 
 
@@ -306,9 +312,9 @@ async def test_log_failure_ends_span_without_retrying_uncertain_writes(
 
     monkeypatch.setattr(FakeSpan, "log", fail_log)
     monkeypatch.setattr(FakeSpan, "end", fail_end)
-    reporter = await prepared_reporter(sdk)
+    sink = await prepared_sink(sdk)
     with pytest.raises(ValueError, match="original log error"):
-        await export(reporter, manifest, cases)
+        await export(sink, manifest, cases)
 
     assert sdk.experiment.spans[0].ended
     assert sdk.experiment.flushes == 0
@@ -368,3 +374,53 @@ async def test_running_evaluation_persists_repeated_export_cancellation_after_th
     assert sdk.experiment.flushes == 1
     assert (tmp_path / "run/events.jsonl").is_file()
     assert calls == ["value"], "export cancellation must not replay the task"
+
+
+async def test_log_failure_is_primary_when_span_cleanup_also_fails(monkeypatch):
+    def broken_log(self, **event):
+        raise ValueError("primary")
+
+    def broken_end(self):
+        self.ended = True
+        raise RuntimeError("private cleanup detail")
+
+    monkeypatch.setattr(FakeSpan, "log", broken_log)
+    monkeypatch.setattr(FakeSpan, "end", broken_end)
+    sdk = FakeSDK()
+    with pytest.raises(ValueError, match="primary") as error:
+        await export(await prepared_sink(sdk), *sample())
+    assert sdk.experiment.spans[0].ended
+    assert sdk.experiment.flushes == 0
+    assert error.value.__notes__ == ["Span cleanup also failed (RuntimeError)"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"project": ""},
+        {"project": "test", "experiment": ""},
+        {"project": "test", "app_url": "https://user:password@host"},
+        {"project": "test", "app_url": "http://example.com"},
+    ],
+)
+async def test_bad_destination_fails_before_sdk_init(options):
+    sdk = FakeSDK()
+    with pytest.raises(ConfigurationError):
+        await BraintrustSink(**options, sdk=sdk).prepare()
+    assert sdk.calls == []
+
+
+async def test_later_invalid_score_leaves_known_partial_export():
+    manifest, cases = sample()
+    cases[1]["scores"] = [{"name": "cost", "value": 2}]
+    sdk = FakeSDK()
+    with pytest.raises(ConfigurationError):
+        await export(await prepared_sink(sdk), manifest, cases)
+    assert len(sdk.calls) == len(sdk.experiment.spans) == sdk.experiment.flushes == 1
+
+
+async def test_no_trial_events_do_not_create_remote_experiment():
+    sdk = FakeSDK()
+    receipt = await export(await prepared_sink(sdk), sample()[0], [])
+    assert sdk.calls == []
+    assert receipt.details == {"rows": 0}

@@ -5,7 +5,7 @@ import importlib
 import json
 import math
 import os
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -43,57 +43,56 @@ def _synchronous_state(sdk: Any) -> Any:
     return state
 
 
-def _events(manifest: JsonObject, cases: Sequence[JsonObject]) -> list[JsonObject]:
-    """Validate the entire projection before the first remote write."""
-    events: list[JsonObject] = []
-    for case in cases:
-        scores: JsonObject = {}
-        score_rows = case.get("scores", [])
-        if not isinstance(score_rows, list):
-            raise ConfigurationError("Braintrust export: case scores must be an array")
-        for score in score_rows:
-            if not isinstance(score, dict) or not isinstance(score.get("name"), str):
-                raise ConfigurationError("Braintrust export: invalid score record")
-            name = str(score["name"])
-            if name in scores:
-                raise ConfigurationError(f"Braintrust export: duplicate score {name!r}")
-            value = score.get("value")
-            if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or not 0 <= value <= 1
-            ):
-                raise ConfigurationError(
-                    f"Braintrust only accepts scores in [0, 1]; {name!r} for "
-                    f"case {case.get('case_id')!r} is {value!r}. Local scores are unchanged."
-                )
-            scores[name] = value
-        # Namespaced evidence cannot collide with dataset metadata keys. The complete case keeps
-        # absent expected/output distinct from explicit null even if a remote UI hides null.
-        evidence: JsonObject = {
-            "run_id": manifest.get("run_id"),
-            "dataset": manifest.get("dataset"),
-            "case": dict(case),
-        }
-        event: JsonObject = {"scores": scores, "metadata": {"mic": evidence}}
-        for key in ("input", "expected", "output"):
-            if key in case:
-                event[key] = case[key]
-        errors = case.get("errors")
-        if errors:
-            event["error"] = json.dumps(errors, ensure_ascii=False, allow_nan=False)
-        latency = case.get("latency")
-        if isinstance(latency, dict):
-            metrics: JsonObject = {}
-            for key, value in latency.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    metrics[f"mic_{key}"] = value
-            event["metrics"] = metrics
-        # The SDK may normalize its payload in place. Keep the authoritative local
-        # manifest/cases isolated from that third-party mutation boundary.
-        events.append(copy.deepcopy(event))
-    return events
+def _event(run_id: str, trial: TrialFinished) -> JsonObject:
+    """Validate and isolate one bounded trial before its remote write."""
+    case = trial.result
+    scores: JsonObject = {}
+    score_rows = case.get("scores", [])
+    if not isinstance(score_rows, list):
+        raise ConfigurationError("Braintrust export: case scores must be an array")
+    for score in score_rows:
+        if not isinstance(score, dict) or not isinstance(score.get("name"), str):
+            raise ConfigurationError("Braintrust export: invalid score record")
+        name = str(score["name"])
+        if name in scores:
+            raise ConfigurationError(f"Braintrust export: duplicate score {name!r}")
+        value = score.get("value")
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise ConfigurationError(
+                f"Braintrust only accepts scores in [0, 1]; {name!r} for "
+                f"case {case.get('case_id')!r} is {value!r}. Local scores are unchanged."
+            )
+        scores[name] = value
+    # Namespaced evidence cannot collide with dataset metadata keys. The complete case keeps
+    # absent expected/output distinct from explicit null even if a remote UI hides null.
+    evidence: JsonObject = {
+        "run_id": run_id,
+        "dataset": {"source_id": trial.source_id, "task": trial.task},
+        "case": dict(case),
+    }
+    event: JsonObject = {"scores": scores, "metadata": {"mic": evidence}}
+    for key in ("input", "expected", "output"):
+        if key in case:
+            event[key] = case[key]
+    errors = case.get("errors")
+    if errors:
+        event["error"] = json.dumps(errors, ensure_ascii=False, allow_nan=False)
+    latency = case.get("latency")
+    if isinstance(latency, dict):
+        metrics: JsonObject = {}
+        for key, value in latency.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                metrics[f"mic_{key}"] = value
+        event["metrics"] = metrics
+    # The SDK may normalize its payload in place. Keep the authoritative local
+    # manifest/cases isolated from that third-party mutation boundary.
+
+    return copy.deepcopy(event)
 
 
 class BraintrustSink:
@@ -189,13 +188,7 @@ class _Session:
     async def write(self, event: RunEvent) -> None:
         if not isinstance(event, TrialFinished):
             return
-        projection = _events(
-            {
-                "run_id": self.run.run_id,
-                "dataset": {"source_id": event.source_id, "task": event.task},
-            },
-            [event.result],
-        )[0]
+        projection = _event(self.run.run_id, event)
         await self.pool.invoke(self._write, event, projection)
 
     def _write(self, event: TrialFinished, projection: JsonObject) -> None:
@@ -209,7 +202,13 @@ class _Session:
         )
         try:
             span.log(**projection)
-        finally:
+        except BaseException as primary:
+            try:
+                span.end()
+            except Exception as cleanup:
+                primary.add_note(f"Span cleanup also failed ({type(cleanup).__name__})")
+            raise
+        else:
             span.end()
         # One bounded trial at a time. Do not retry a failed/uncertain write.
         experiment.flush()

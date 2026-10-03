@@ -54,18 +54,11 @@ class CaseSchema[I, E, M]:
 @dataclass(frozen=True)
 class ReadLimits:
     max_rows: int = 10_000
-    max_bytes: int = 64 * 1024 * 1024
-    max_record_bytes: int = 1024 * 1024
     timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
-        for key, value in (
-            ("max_rows", self.max_rows),
-            ("max_bytes", self.max_bytes),
-            ("max_record_bytes", self.max_record_bytes),
-        ):
-            if type(value) is not int or value <= 0:
-                raise ConfigurationError(f"{key} must be a positive integer")
+        if type(self.max_rows) is not int or self.max_rows <= 0:
+            raise ConfigurationError("max_rows must be a positive integer")
         if (
             isinstance(self.timeout_seconds, bool)
             or not math.isfinite(self.timeout_seconds)

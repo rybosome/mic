@@ -30,7 +30,7 @@ def sample() -> tuple[JsonObject, list[JsonObject]]:
             "output": None,
             "scores": [{"name": "exact", "value": None, "metadata": {"why": "none"}}],
             "errors": [],
-            "latency": {"task_ms": 1.0, "total_ms": 2.0},
+            "latency": {"task_ms": 1.0, "scoring_ms": 1.0, "total_ms": 2.0},
             "provenance": {"line": 1},
         },
         {
@@ -44,7 +44,7 @@ def sample() -> tuple[JsonObject, list[JsonObject]]:
             "scores": [{"name": "exact", "value": 1.0}],
             "metadata": ["arbitrary", 42],
             "errors": [],
-            "latency": {"task_ms": 1.0},
+            "latency": {"task_ms": 1.0, "scoring_ms": 1.0, "total_ms": 2.0},
             "provenance": {"line": 2},
         },
     ]
@@ -52,3 +52,16 @@ def sample() -> tuple[JsonObject, list[JsonObject]]:
         case["task"] = "<script>bad()</script>"
         case["source_id"] = "source"
     return manifest, cases
+
+
+def event_record(case):
+    return {
+        "schema_version": "mic-event-v1",
+        "type": "trial_finished",
+        "task": case["task"],
+        "source_id": case["source_id"],
+        "row_index": case["row_index"],
+        "trial": case["trial"],
+        "case_id": case["case_id"],
+        "result": case,
+    }

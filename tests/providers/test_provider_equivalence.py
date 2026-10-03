@@ -87,7 +87,7 @@ def source_fixture(kind, rows, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_all_builtin_sources_have_identical_normalized_snapshot(tmp_path):
+async def test_all_builtin_sources_have_identical_normalized_records(tmp_path):
     snapshots = []
     for kind in ("memory", "file", "bigquery", "braintrust"):
         source = source_fixture(kind, ROWS, tmp_path)
@@ -190,7 +190,7 @@ async def test_nested_native_dataclass_shapes_have_equal_digest_across_all_sourc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["memory", "file", "bigquery", "braintrust"])
-async def test_nested_native_schema_failure_has_field_path_for_every_source(kind, tmp_path):
+async def test_nested_native_schema_failure_is_classified_for_every_source(kind, tmp_path):
     rows = [
         {
             "id": "nested",

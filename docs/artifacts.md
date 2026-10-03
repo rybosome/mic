@@ -15,8 +15,10 @@ reader, or migration. These alpha formats are forward-only.
 [Shared definitions](artifact-schemas/common-v3.schema.json) describe statistics,
 trials, sources, failures, and receipts. Schemas use Draft 2020-12; resolve their
 references from the supplied files with date-time checking enabled. Tests validate
-them offline. Runtime stays dependency-free; the report reader performs bounded
-JSON/format checks, not full JSON Schema validation.
+them offline. Runtime stays dependency-free; the report reader performs bounded JSON checks
+and validates the summary/event fields used by the viewer, including matching
+trial coordinates. It does not perform full JSON Schema validation or certify
+cross-file transactional completeness.
 
 ## Run summary
 
@@ -34,7 +36,7 @@ An initial `running` marker contains only `schema_version`, `run_id`, and
 - `sinks`: name, status, successfully delivered event count, details, optional error.
 - `output_dir`: selected directory or null.
 - `info`: run ID, UTC start time, and per-task definition info, including schemas,
-  resolved options, scorer names, and code provenance.
+  resolved options, effective read limits, source_id, scorer names, and code provenance.
 
 Every statistics object has count, mean, min, max. Empty observations have count
 zero and null for the other fields. No percentiles or observation arrays are kept.
@@ -59,7 +61,8 @@ All events include `schema_version="mic-event-v1"`, `type`, and `source_id`.
 - `trial_finished`: task, row_index, trial, case_id, and result.
 - `source_finished`: source summary, emitted after iterator cleanup.
 
-Source indices count raw record occurrences, including rejections. Case IDs use
+Source indices count raw record occurrences, including rejections. records_seen
+includes a consumed over-cap probe, which need not be accepted or rejected. Case IDs use
 run/source/row occurrence; labels need not be unique. Trial numbers start at one.
 Accepted records can exist without admitted trials if cancellation or an execution
 cap intervenes. SourceFinished can precede completion of its admitted trials.

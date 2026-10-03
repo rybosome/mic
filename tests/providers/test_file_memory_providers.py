@@ -73,17 +73,19 @@ async def test_file_row_caps_fail_instead_of_truncate(tmp_path, suffix):
 
 
 @pytest.mark.asyncio
-async def test_file_record_and_raw_byte_caps(tmp_path):
-    path = tmp_path / "rows.jsonl"
-    path.write_text('{"input":"' + "x" * 100 + '"}\n', encoding="utf-8")
-    with pytest.raises(DatasetError, match="max_record_bytes=20"):
-        await file_rows(path, ReadLimits(max_record_bytes=20))
-    with pytest.raises(DatasetError, match="max_bytes=30"):
-        await file_rows(path, ReadLimits(max_bytes=30))
-    path = tmp_path / "rows.json"
-    path.write_text('[{"input":"' + "x" * 100 + '"}]', encoding="utf-8")
-    with pytest.raises(DatasetError, match="max_bytes=30"):
-        await file_rows(path, ReadLimits(max_bytes=30))
+@pytest.mark.parametrize("suffix", ["json", "jsonl"])
+async def test_file_accepts_records_larger_than_one_mib(tmp_path, suffix):
+    import json
+
+    path = tmp_path / f"rows.{suffix}"
+    value = "x" * (1024 * 1024 + 1)
+    record = {"input": value}
+    path.write_text(json.dumps([record] if suffix == "json" else record), encoding="utf-8")
+    rows, provenance = await file_rows(path)
+    assert len(rows) == 1
+    assert rows[0]["input"] == value
+    assert provenance["raw_bytes"] == path.stat().st_size
+    assert provenance["read_complete"] is True
 
 
 @pytest.mark.asyncio

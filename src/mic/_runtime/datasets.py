@@ -138,7 +138,7 @@ class DatasetReader[I, E, M]:
         self.limits = limits
         self.on_invalid = on_invalid
         self.require_expected = require_expected
-        self.seen = self.accepted = self.rejected = self.bytes = 0
+        self.seen = self.accepted = self.rejected = 0
         self.exhausted = False
         self.error: Failure | None = None
         self.provenance: JsonObject = {}
@@ -215,14 +215,6 @@ class DatasetReader[I, E, M]:
                             if self.on_invalid == "abort":
                                 raise DatasetError("Malformed dataset record") from None
                             continue
-                        encoded = (dumps(normalized) + "\n").encode("utf-8")
-                        if len(encoded) > self.limits.max_record_bytes:
-                            raise DatasetError(
-                                f"Case exceeds max_record_bytes={self.limits.max_record_bytes}"
-                            )
-                        self.bytes += len(encoded)
-                        if self.bytes > self.limits.max_bytes:
-                            raise DatasetError(f"Dataset exceeds max_bytes={self.limits.max_bytes}")
                         logical = {
                             key: value for key, value in normalized.items() if key != "provenance"
                         }
@@ -239,6 +231,7 @@ class DatasetReader[I, E, M]:
         finally:
             if read is not None:
                 self.provenance = read.provenance
+                self.seen = read.context.rows_seen
             await pool.close()
 
 

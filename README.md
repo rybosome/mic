@@ -237,6 +237,54 @@ def tickets() -> BraintrustHandle:
 Factories describe sources; reading a cloud dataset contacts that service.
 See [provider setup and limits](docs/providers.md).
 
+### Custom sources
+
+A dataset factory can return a generator, async iterator, or a `mic.DatasetSource`.
+Mic reads and validates records as capacity becomes available; it does not first
+save a full snapshot.
+
+Here is a simplified YAML source: one document per case, separated by `---`.
+
+```console
+uv add pyyaml
+```
+
+<!-- snippet: yaml-dataset -->
+```python
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+
+import mic
+
+
+@dataclass(frozen=True)
+class YamlDocuments(mic.DatasetSource):
+    path: Path
+
+    def read(self, ctx: mic.ReadContext) -> Iterator[object]:
+        import yaml
+
+        ctx.set_provenance(provider="yaml", path=str(self.path))
+        # Open only when reading, and close on exhaustion or early exit.
+        with self.path.open("rb") as stream:
+            try:
+                yield from yaml.safe_load_all(stream)
+            except yaml.YAMLError:
+                # Parser errors can contain private source excerpts.
+                raise mic.DatasetError("Invalid YAML document stream") from None
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets() -> YamlDocuments:
+    return YamlDocuments(Path(__file__).with_name("tickets.yaml"))
+```
+
+`read(ctx)` yields raw records; Mic handles schema validation and execution.
+Built-in providers use the [same contract](docs/providers.md#custom-sources),
+without registration. For additional YAML safeguards (aliases, duplicate keys,
+and parser depth/node limits), see [`yaml_source.py`](examples/yaml_source.py).
+
 ## Scoring: multiple metrics and supporting evidence
 
 Each scorer produces **one named metric**;
@@ -416,7 +464,12 @@ In a notebook or async application with an active event loop, use `mic.arun()`:
 import mic
 from ticket_eval import classify
 
-result = await mic.arun(classify, trials=5, concurrency=2, require=['tasks["classify"].scores["accuracy"].mean>=0.9'])
+result = await mic.arun(
+    classify,
+    trials=5,
+    concurrency=2,
+    require=['tasks["classify"].scores["accuracy"].mean>=0.9'],
+)
 result.summary.tasks["classify"].scores
 ```
 
@@ -424,7 +477,9 @@ Either runner supports sync and async tasks. No files are written by default;
 add `output=".mic/tickets"` to record events and a final summary. Records are
 validated and task/scorer work is pipelined as the source is read. Use
 `on_invalid="skip"` (CLI: `--on-invalid skip`) to skip malformed records.
-See the [Python execution API](docs/api.md#execution-and-errors) for all options.
+Pass a list of evaluations to either runner to share dataset reads and a global
+concurrency limit; the CLI equivalent is `mic run "module:*"`.
+See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
 
 ## Notes and documentation
 

@@ -13,6 +13,8 @@ from mic._runtime.validation import json_object, loads, positive_integer
 from mic.errors import ConfigurationError
 from mic.models import JsonObject
 
+from ._data import check_event, check_manifest
+
 _TEMPLATES = Path(__file__).parent / "templates"
 
 
@@ -77,6 +79,7 @@ def write_report(
             raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v3")
         if manifest.get("status") not in ("completed", "failed", "cancelled"):
             raise ConfigurationError("Run evidence has not been finalized")
+        check_manifest(manifest)
         cases: list[JsonObject] = []
         consumed = len(data)
         with events_path.open("rb") as stream:
@@ -89,18 +92,11 @@ def write_report(
                     raise ConfigurationError(
                         "Unsupported event artifact schema; expected mic-event-v1"
                     )
-                if event.get("type") == "trial_finished":
+                result = check_event(event)
+                if result is not None:
                     if len(cases) >= max_cases:
                         raise ConfigurationError("Report exceeds max_cases")
-                    result = json_object(event["result"])
-                    result.update({"task": event["task"], "source_id": event["source_id"]})
                     cases.append(result)
-                elif event.get("type") not in (
-                    "case_accepted",
-                    "record_rejected",
-                    "source_finished",
-                ):
-                    raise ConfigurationError("Unknown recorded event type")
         rendered = render_report(manifest, cases)
         destination.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(destination, (rendered,))

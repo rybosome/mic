@@ -1,5 +1,6 @@
 """Incremental JSON-array and JSONL sources with physical row provenance."""
 
+import hashlib
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,17 +27,17 @@ class FileHandle(DatasetSource):
             raise ConfigurationError(f"unsupported file format {format!r}")
         ctx.set_provenance(provider="file", path=str(path), format=format)
         try:
-            with ctx.open_binary(path) as stream:
+            with path.open("rb") as raw:
+                stream = _FileReader(raw, ctx)
                 if format == "json":
-                    for index, data in enumerate(_array_records(stream, ctx), start=1):
+                    for index, data in enumerate(_array_records(stream), start=1):
                         yield _record(data, path, index)
                 else:
                     line_number = 0
                     index = 0
-                    while data := stream.readline(ctx.limits.max_record_bytes + 2):
+                    while data := stream.readline():
                         line_number += 1
                         payload = data.rstrip(b"\r\n")
-                        ctx.check_record_bytes(len(payload))
                         if not payload.strip():
                             continue
                         index += 1
@@ -62,7 +63,7 @@ def _record(data: bytes, path: Path, index: int, *, line: int | None = None) -> 
         return RecordError(str(exc))
 
 
-def _array_records(stream: BinaryIO, ctx: ReadContext) -> Iterator[bytes]:
+def _array_records(stream: "_FileReader") -> Iterator[bytes]:
     """Frame one JSON value at a time, without decoding the surrounding array.
 
     Framing errors abort: without a reliable boundary it is unsafe to skip ahead.
@@ -72,7 +73,7 @@ def _array_records(stream: BinaryIO, ctx: ReadContext) -> Iterator[bytes]:
     depth = 0
     after_comma = False
     record = bytearray()
-    while chunk := stream.read(min(8192, ctx.limits.max_record_bytes + 1)):
+    while chunk := stream.read(8192):
         for byte in chunk:
             if not started:
                 if byte in b" \t\r\n":
@@ -112,6 +113,33 @@ def _array_records(stream: BinaryIO, ctx: ReadContext) -> Iterator[bytes]:
                     raise DatasetError("Unbalanced JSON array record")
             if record or byte not in b" \t\r\n":
                 record.append(byte)
-                ctx.check_record_bytes(len(record))
     if not ended or depth or quoted:
         raise DatasetError("Incomplete JSON array")
+
+
+class _FileReader:
+    """Track consumed file bytes and their digest without limiting input size."""
+
+    def __init__(self, stream: BinaryIO, ctx: ReadContext) -> None:
+        self._stream = stream
+        self._ctx = ctx
+        self._digest = hashlib.sha256()
+        self._bytes = 0
+
+    def _received(self, data: bytes) -> bytes:
+        self._bytes += len(data)
+        self._digest.update(data)
+        self._ctx.set_provenance(
+            raw_bytes=self._bytes,
+            raw_prefix_sha256=self._digest.hexdigest(),
+            read_complete=not data,
+        )
+        if not data:
+            self._ctx.set_provenance(raw_sha256=self._digest.hexdigest())
+        return data
+
+    def read(self, size: int) -> bytes:
+        return self._received(self._stream.read(size))
+
+    def readline(self) -> bytes:
+        return self._received(self._stream.readline())

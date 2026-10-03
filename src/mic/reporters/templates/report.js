@@ -37,11 +37,11 @@
     $('run-meta').textContent = `${Object.keys(manifest.sources).length} source(s) · ${manifest.run_id}`;
     $('raw-manifest').textContent = json(manifest);
     for (const failure of manifest.failures ?? []) {
-      if (failure.case_id == null) notice(`${failure.phase} · ${failure.type}`, failure.message);
+      notice(`${failure.phase} · ${failure.type}`, failure.message);
     }
     for (const [name, result] of (manifest.sinks ?? []).map(sink => [sink.name, sink])) {
       if (['failed', 'cancelled'].includes(result.status)) {
-        notice(`Reporting ${result.status} · ${name}`, display(result.error ?? result.message ?? 'Export did not complete.'));
+        notice(`Sink ${result.status} · ${name}`, display(result.error ?? result.message ?? 'Sink did not complete.'));
       }
     }
     const trials = manifest.summary.trials;
@@ -52,13 +52,17 @@
         stat(`${task} · ${name}`, numeric(score.mean), `${score.count} numeric · min ${numeric(score.min)} · max ${numeric(score.max)}`);
       }
     }
+    for (const [phase, stats] of Object.entries({task_ms: trials.task_ms, scoring_ms: trials.scoring_ms, total_ms: trials.total_ms})) {
+      if (stats) stat(phase, `${numeric(stats.mean)} ms`, `${stats.count} timed · max ${numeric(stats.max)} ms`);
+    }
     for (const [id, source] of Object.entries(manifest.sources)) {
+      stat(source.name, `${source.records_accepted} accepted`, `${source.records_rejected} rejected · ${source.records_seen} read`);
       if (source.error) notice(`Source ${id} · ${source.error.type}`, source.error.message);
       if (!source.exhausted) notice('Incomplete source', `${source.name}: only a consumed prefix is represented.`);
     }
     const gates = manifest.requirements ?? [];
-    stat('Quality gates', gates.length ? `${gates.filter(gate => gate.passed).length} / ${gates.length}` : 'Not set',
-      gates.length ? gates.map(gate => gate.expression).join(' · ') : 'Execution status and quality are separate');
+    stat('Requirements', gates.length ? `${gates.filter(gate => gate.passed).length} / ${gates.length}` : 'Not set',
+      gates.length ? gates.map(gate => `${gate.passed ? 'PASS' : 'FAIL'} ${gate.expression} (actual: ${gate.actual ?? 'unavailable'})`).join(' · ') : 'Execution status and quality are separate');
   }
 
   function valueCard(label, value, wide = false) {
@@ -106,11 +110,6 @@
       const element = text('div', '', 'error');
       element.append(text('strong', `${error.phase} · ${error.type}`), text('p', error.message));
       if (error.scorer) element.append(text('p', `Scorer: ${error.scorer}`));
-      if (error.traceback) {
-        const details = document.createElement('details');
-        details.append(text('summary', 'Traceback'), text('pre', error.traceback));
-        element.append(details);
-      }
       $('panel-errors').append(element);
     }
     if (!(row.errors ?? []).length) {

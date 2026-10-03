@@ -368,3 +368,56 @@ def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels
     assert result.summary.trials.completed == 15
     assert result.info.tasks["classify"]["options"]["concurrency"] == 2
     assert result.output_dir is None
+
+
+def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path):
+    module, constructor, _ = quickstart
+    # JSON documents are also valid YAML; reuse the same classifier fixture.
+    (tmp_path / "tickets.yaml").write_text(
+        "\n---\n".join(JSONL.splitlines()) + "\n", encoding="utf-8"
+    )
+    exec(snippet("yaml-dataset"), module.__dict__)
+    exec(snippet("quickstart-task"), module.__dict__)
+    assert main(["run", "ticket_eval:classify", "--output", "yaml"]) == 0
+    saved = json.loads(Path("yaml/run.json").read_text(encoding="utf-8"))
+    assert saved["summary"]["trials"]["completed"] == 3
+    assert constructor.call_count == 3
+    assert next(iter(saved["sources"].values()))["provenance"]["provider"] == "yaml"
+
+
+def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_path, monkeypatch):
+    import mic
+
+    module, _, _ = quickstart
+    exec(snippet("yaml-dataset"), module.__dict__)
+    path = tmp_path / "tickets.yaml"
+    path.write_text("input: first\n---\ninput: second\n", encoding="utf-8")
+    opened = []
+    original_open = Path.open
+
+    def track_open(self, *args, **kwargs):
+        stream = original_open(self, *args, **kwargs)
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(Path, "open", track_open)
+    source = module.YamlDocuments(path)
+    records = source.read(mic.ReadContext(mic.ReadLimits()))
+    assert opened == []
+    assert next(records) == {"input": "first"}
+    assert len(opened) == 1
+    assert not opened[0].closed
+    records.close()
+    assert opened[0].closed
+
+
+def test_inline_yaml_source_sanitizes_parser_errors(quickstart, tmp_path):
+    import mic
+
+    module, _, _ = quickstart
+    exec(snippet("yaml-dataset"), module.__dict__)
+    path = tmp_path / "tickets.yaml"
+    path.write_text("input: [private source excerpt\n", encoding="utf-8")
+    records = module.YamlDocuments(path).read(mic.ReadContext(mic.ReadLimits()))
+    with pytest.raises(mic.DatasetError, match="^Invalid YAML document stream$"):
+        list(records)

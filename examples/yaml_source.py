@@ -44,7 +44,7 @@ class YamlDocuments(mic.DatasetSource):
                 return super().construct_mapping(node, deep=deep)
 
         ctx.set_provenance(provider="yaml", path=str(self.path))
-        with ctx.open_binary(self.path) as stream:
+        with self.path.open("rb") as stream:
             loader = Loader(stream)
             try:
                 while loader.check_data():
