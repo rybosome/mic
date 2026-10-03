@@ -22,6 +22,7 @@ from .models import (
 )
 from .runner import apreflight, arun, preflight, run
 from .schema import Schema, SchemaError, schema
+from .summaries import EvaluationSummary, RequirementResult, Statistics, TaskSummary, TrialSummary
 
 __all__ = [
     "MISSING",
@@ -30,6 +31,7 @@ __all__ = [
     "Dataset",
     "DatasetError",
     "Evaluation",
+    "EvaluationSummary",
     "JsonObject",
     "JsonValue",
     "MicError",
@@ -37,6 +39,7 @@ __all__ = [
     "MissingExpectedError",
     "RawCase",
     "ReadLimits",
+    "RequirementResult",
     "RunResult",
     "Schema",
     "SchemaError",
@@ -44,8 +47,11 @@ __all__ = [
     "Score",
     "ScoreContext",
     "Scorer",
+    "Statistics",
     "TaskContext",
     "TaskResult",
+    "TaskSummary",
+    "TrialSummary",
     "ainspect_dataset",
     "apreflight",
     "arun",
