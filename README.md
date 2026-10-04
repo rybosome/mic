@@ -10,15 +10,16 @@ and streams results with optional local evidence.
 
 Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
+In a new project directory:
+
 ```console
-uv venv --python 3.12
+uv init --python 3.12
+uv add mic-evals
 source .venv/bin/activate
-uv pip install mic-evals
 ```
 
 On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
-Already using a virtual environment? Skip its creation and activation.
-You can substitute `python -m pip install` for `uv pip install`.
+In an existing uv project, skip `uv init`.
 
 ## Quickstart: evaluate a support-ticket classifier
 
@@ -27,7 +28,7 @@ and **the code to call**. This example classifies tickets as bugs, feature reque
 or questions.
 
 ```console
-uv pip install 'mic-evals[pydantic]' openai
+uv add 'mic-evals[pydantic]' openai
 ```
 
 Set `OPENAI_API_KEY` in your environment. Running this example sends tickets to
@@ -186,7 +187,7 @@ running the task. The scorer, task, and run commands do not change.
 ### BigQuery
 
 ```console
-uv pip install 'mic-evals[bigquery]'
+uv add 'mic-evals[bigquery]'
 ```
 
 Configure Application Default Credentials. Replace the dataset factory with this
@@ -215,7 +216,7 @@ def tickets() -> BigQueryHandle:
 ### Braintrust
 
 ```console
-uv pip install 'mic-evals[braintrust]'
+uv add 'mic-evals[braintrust]'
 ```
 
 Set `BRAINTRUST_API_KEY`. Use an existing dataset with the same `input` and
@@ -239,8 +240,13 @@ See [provider setup and limits](docs/providers.md).
 
 ### Custom sources
 
-Start with a factory that yields records. Here is a simple reader for YAML
-documents delimited by `---`. Save these tickets as `tickets.yaml`:
+Here is a simple reader for YAML documents delimited by `---`. Install `pyyaml`:
+
+```console
+uv add pyyaml
+```
+
+Save these tickets as `tickets.yaml`:
 
 <!-- snippet: tickets-yaml -->
 ```yaml
@@ -266,9 +272,7 @@ expected:
   label: question
 ```
 
-```console
-uv add pyyaml
-```
+Start with a factory that yields records.
 
 <!-- snippet: yaml-dataset -->
 ```python
@@ -289,8 +293,8 @@ def tickets() -> Iterator[object]:
             raise mic.DatasetError("Invalid YAML document stream") from None
 ```
 
-For a remote YAML file, accept `ctx` to pass the remaining row selection and
-read time into the reader:
+For greater control over runtime behavior, accept `ctx` to pass the remaining
+row selection and read time into the reader:
 
 <!-- snippet: yaml-context-dataset -->
 ```python
