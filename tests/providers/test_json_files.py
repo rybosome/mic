@@ -163,7 +163,7 @@ async def test_wrapped_rows_use_existing_mapping_and_skip_policy(tmp_path):
 async def test_chunk_boundaries_and_large_ignored_array(tmp_path):
     path = tmp_path / "large.json"
     # Each ignored scalar fits in memory; the 2 MB array must not be retained.
-    with path.open("w") as file:
+    with path.open("w", encoding="utf-8") as file:
         file.write('{"ignored":[')
         for index in range(2000):
             file.write(("," if index else "") + json.dumps("x" * 1000))
