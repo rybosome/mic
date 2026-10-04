@@ -20,7 +20,7 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 def snippet(name: str) -> str:
     match = re.search(
-        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|console)\n(.*?)```",
+        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|yaml|console)\n(.*?)```",
         README,
         re.DOTALL,
     )
@@ -375,10 +375,11 @@ def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels
 
 def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path):
     module, constructor, _ = quickstart
-    # JSON documents are also valid YAML; reuse the same classifier fixture.
-    (tmp_path / "tickets.yaml").write_text(
-        "\n---\n".join(JSONL.splitlines()) + "\n", encoding="utf-8"
-    )
+    import yaml
+
+    content = snippet("tickets-yaml")
+    assert list(yaml.safe_load_all(content)) == [json.loads(line) for line in JSONL.splitlines()]
+    (tmp_path / "tickets.yaml").write_text(content, encoding="utf-8")
     exec(snippet("yaml-dataset"), module.__dict__)
     exec(snippet("quickstart-task"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "yaml"]) == 0
@@ -439,7 +440,7 @@ def test_contextual_yaml_examples_select_records_and_forward_timeout(
     def open_yaml(url, *, timeout):
         assert url == "https://example.com/tickets.yaml"
         assert 0 < timeout <= 30
-        stream = BytesIO(("\n---\n".join(JSONL.splitlines()) + "\n").encode())
+        stream = BytesIO(snippet("tickets-yaml").encode())
         opened.append(stream)
         return stream
 

@@ -239,8 +239,32 @@ See [provider setup and limits](docs/providers.md).
 
 ### Custom sources
 
-Start with a factory that yields records. It doesn't need to accept `ctx`.
-This example reads one YAML document per case, separated by `---`:
+Start with a factory that yields records. Here is a simple reader for YAML
+documents delimited by `---`. Save these tickets as `tickets.yaml`:
+
+<!-- snippet: tickets-yaml -->
+```yaml
+id: upload
+input:
+  subject: PDF upload
+  body: The app closes whenever I upload a PDF.
+expected:
+  label: bug
+---
+id: export
+input:
+  subject: Invoice export
+  body: Can you add an option to export invoices?
+expected:
+  label: feature
+---
+id: invoice
+input:
+  subject: Past invoice
+  body: Where can I download last month's invoice?
+expected:
+  label: question
+```
 
 ```console
 uv add pyyaml
@@ -293,8 +317,7 @@ def tickets(ctx: mic.ReadContext) -> Iterator[object]:
 ```
 
 To package either style as a reusable, configurable source, implement
-`mic.DatasetSource`. Here the URL becomes configuration, and the reading logic
-moves into `read`:
+`mic.DatasetSource`:
 
 <!-- snippet: yaml-source-dataset -->
 ```python
