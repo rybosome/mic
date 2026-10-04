@@ -239,11 +239,8 @@ See [provider setup and limits](docs/providers.md).
 
 ### Custom sources
 
-A dataset factory can return a generator, async iterator, or a `mic.DatasetSource`.
-Mic reads and validates records as capacity becomes available; it does not first
-save a full snapshot.
-
-Here is a simplified YAML source: one document per case, separated by `---`.
+Start with a factory that yields records. It doesn't need to accept `ctx`.
+This example reads one YAML document per case, separated by `---`:
 
 ```console
 uv add pyyaml
@@ -255,41 +252,69 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import mic
+import yaml
 
 
 @mic.dataset(input=Ticket, expected=Classification)
-def tickets(ctx: mic.ReadContext) -> Iterator[object]:
-    import yaml
-
+def tickets() -> Iterator[object]:
     path = Path(__file__).with_name("tickets.yaml")
-    ctx.set_provenance(provider="yaml", path=str(path))
-    # Open only when reading, and close on exhaustion or early exit.
     with path.open("rb") as stream:
         try:
             yield from yaml.safe_load_all(stream)
         except yaml.YAMLError:
-            # Parser errors can contain private source excerpts.
             raise mic.DatasetError("Invalid YAML document stream") from None
 ```
 
-Factory context is optional. It exposes immutable read configuration, raw records
-seen, remaining rows and active read time, and source provenance. Mic handles
-validation and closes the iterator on completion or early exit. Reusable source
-classes implement the [same contract](docs/providers.md#custom-sources).
-For a class-based YAML reader with alias, duplicate-key, and nesting safeguards,
-see [`yaml_source.py`](examples/yaml_source.py).
+For a remote YAML file, accept `ctx` to pass the remaining row selection and
+read time into the reader:
 
-Select raw records and configure a read budget together:
-
+<!-- snippet: yaml-context-dataset -->
 ```python
-mic.run(evaluation, limits=mic.ReadLimits(row_count=500, timeout_seconds=30))
+from itertools import islice
+from urllib.request import urlopen
+
+
+def read_yaml(url: str, ctx: mic.ReadContext) -> Iterator[object]:
+    ctx.set_provenance(provider="yaml", url=url)
+    timeout = ctx.remaining_seconds
+    if timeout is not None and timeout <= 0:
+        raise TimeoutError
+    with urlopen(url, timeout=timeout) as stream:
+        try:
+            yield from islice(yaml.safe_load_all(stream), ctx.remaining_rows)
+        except yaml.YAMLError:
+            raise mic.DatasetError("Invalid YAML document stream") from None
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets(ctx: mic.ReadContext) -> Iterator[object]:
+    yield from read_yaml("https://example.com/tickets.yaml", ctx)
 ```
 
-Both settings default to `None`. Row selection stops successfully without probing
-for another record; rejected or skipped records count toward the selection.
-Time spent waiting for tasks or sinks does not consume the read budget. Providers
-can use `ctx.remaining_seconds` for SDK request timeouts; cancellation cannot
-forcibly stop synchronous work already running in a thread.
+To package either style as a reusable, configurable source, implement
+`mic.DatasetSource`. Here the URL becomes configuration, and `read` reuses the
+reader above:
+
+<!-- snippet: yaml-source-dataset -->
+```python
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class YamlDocuments(mic.DatasetSource):
+    url: str
+
+    def read(self, ctx: mic.ReadContext) -> Iterator[object]:
+        return read_yaml(self.url, ctx)
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets() -> YamlDocuments:
+    return YamlDocuments("https://example.com/tickets.yaml")
+```
+
+See [custom source contracts](docs/providers.md#custom-sources) for context,
+resource ownership, and timeout semantics.
 
 ## Scoring: multiple metrics and supporting evidence
 
@@ -417,13 +442,13 @@ With both scorers from the preceding section attached:
 mic run ticket_eval:classify \
   --trials 5 \
   --require 'tasks["classify"].scores["accuracy"].mean>=0.9' \
-  --require 'tasks["classify"].scores["bug_recall"].mean>=0.95'
+  --require 'tasks["classify"].scores["bug_recall"].mean>=0.95' \
+  --require 'tasks["classify"].scores["bug_recall"].count>=5' \
+  --require 'trials.task_failed==0' \
+  --require 'trials.task_ms.max<=2000'
 ```
 
-Select `.mean`, `.min`, `.max`, or `.count` explicitly. You can also require
-`trials.task_failed == 0` or `trials.task_ms.max <= 2000`.
-All requirements must pass; comparisons support `>=`, `>`, `<=`, `<`, `==`, and `!=`.
-Missing numeric observations fail the requirement. See [quality gates](docs/cli.md#quality-gates) for full semantics.
+See [quality gates](docs/cli.md#quality-gates) for full semantics.
 
 ### Inspect or automate the results
 

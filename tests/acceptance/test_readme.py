@@ -280,6 +280,9 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     assert [gate["passed"] for gate in manifest["requirements"]] == [
         not miss_bug or relaxed_accuracy,
         not miss_bug,
+        True,
+        True,
+        True,
     ]
     assert manifest["summary"]["trials"]["completed"] == 15
     assert manifest["summary"]["trials"]["task_failed"] == 0
@@ -382,11 +385,10 @@ def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path):
     saved = json.loads(Path("yaml/run.json").read_text(encoding="utf-8"))
     assert saved["summary"]["trials"]["completed"] == 3
     assert constructor.call_count == 3
-    assert next(iter(saved["sources"].values()))["provenance"]["provider"] == "yaml"
+    assert next(iter(saved["sources"].values()))["provenance"] == {}
 
 
 def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_path, monkeypatch):
-    import mic
 
     module, _, _ = quickstart
     exec(snippet("yaml-dataset"), module.__dict__)
@@ -401,7 +403,7 @@ def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_pat
         return stream
 
     monkeypatch.setattr(Path, "open", track_open)
-    records = module.tickets.factory(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory()
     assert opened == []
     assert next(records) == {"input": "first"}
     assert len(opened) == 1
@@ -417,6 +419,43 @@ def test_inline_yaml_source_sanitizes_parser_errors(quickstart, tmp_path):
     exec(snippet("yaml-dataset"), module.__dict__)
     path = tmp_path / "tickets.yaml"
     path.write_text("input: [private source excerpt\n", encoding="utf-8")
-    records = module.tickets.factory(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory()
     with pytest.raises(mic.DatasetError, match="^Invalid YAML document stream$"):
         list(records)
+
+
+@pytest.mark.parametrize("packaged", [False, True])
+def test_contextual_yaml_examples_select_records_and_forward_timeout(
+    quickstart, monkeypatch, packaged
+):
+    import urllib.request
+    from io import BytesIO
+
+    import mic
+
+    module, _, _ = quickstart
+    opened = []
+
+    def open_yaml(url, *, timeout):
+        assert url == "https://example.com/tickets.yaml"
+        assert 0 < timeout <= 30
+        stream = BytesIO(("\n---\n".join(JSONL.splitlines()) + "\n").encode())
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_yaml)
+    exec(snippet("yaml-dataset"), module.__dict__)
+    exec(snippet("yaml-context-dataset"), module.__dict__)
+    if packaged:
+        exec(snippet("yaml-source-dataset"), module.__dict__)
+        source = module.tickets.factory()
+        assert isinstance(source, mic.DatasetSource)
+    assert opened == []
+    inspected = mic.inspect_dataset(
+        module.tickets, limits=mic.ReadLimits(row_count=2, timeout_seconds=30)
+    )
+    assert len(inspected["rows"]) == 2
+    assert inspected["dataset"]["records_seen"] == 2
+    assert not inspected["dataset"]["exhausted"]
+    assert inspected["dataset"]["provenance"]["provider"] == "yaml"
+    assert len(opened) == 1 and opened[0].closed
