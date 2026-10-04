@@ -20,7 +20,7 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 def snippet(name: str) -> str:
     match = re.search(
-        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|console)\n(.*?)```",
+        rf"<!-- snippet: {re.escape(name)} -->\s*```(?:python|jsonl|yaml|console)\n(.*?)```",
         README,
         re.DOTALL,
     )
@@ -280,6 +280,9 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     assert [gate["passed"] for gate in manifest["requirements"]] == [
         not miss_bug or relaxed_accuracy,
         not miss_bug,
+        True,
+        True,
+        True,
     ]
     assert manifest["summary"]["trials"]["completed"] == 15
     assert manifest["summary"]["trials"]["task_failed"] == 0
@@ -372,21 +375,21 @@ def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels
 
 def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path):
     module, constructor, _ = quickstart
-    # JSON documents are also valid YAML; reuse the same classifier fixture.
-    (tmp_path / "tickets.yaml").write_text(
-        "\n---\n".join(JSONL.splitlines()) + "\n", encoding="utf-8"
-    )
+    import yaml
+
+    content = snippet("tickets-yaml")
+    assert list(yaml.safe_load_all(content)) == [json.loads(line) for line in JSONL.splitlines()]
+    (tmp_path / "tickets.yaml").write_text(content, encoding="utf-8")
     exec(snippet("yaml-dataset"), module.__dict__)
     exec(snippet("quickstart-task"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "yaml"]) == 0
     saved = json.loads(Path("yaml/run.json").read_text(encoding="utf-8"))
     assert saved["summary"]["trials"]["completed"] == 3
     assert constructor.call_count == 3
-    assert next(iter(saved["sources"].values()))["provenance"]["provider"] == "yaml"
+    assert next(iter(saved["sources"].values()))["provenance"] == {}
 
 
 def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_path, monkeypatch):
-    import mic
 
     module, _, _ = quickstart
     exec(snippet("yaml-dataset"), module.__dict__)
@@ -401,8 +404,7 @@ def test_inline_yaml_source_is_lazy_and_closes_on_early_exit(quickstart, tmp_pat
         return stream
 
     monkeypatch.setattr(Path, "open", track_open)
-    source = module.YamlDocuments(path)
-    records = source.read(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory()
     assert opened == []
     assert next(records) == {"input": "first"}
     assert len(opened) == 1
@@ -418,6 +420,42 @@ def test_inline_yaml_source_sanitizes_parser_errors(quickstart, tmp_path):
     exec(snippet("yaml-dataset"), module.__dict__)
     path = tmp_path / "tickets.yaml"
     path.write_text("input: [private source excerpt\n", encoding="utf-8")
-    records = module.YamlDocuments(path).read(mic.ReadContext(mic.ReadLimits()))
+    records = module.tickets.factory()
     with pytest.raises(mic.DatasetError, match="^Invalid YAML document stream$"):
         list(records)
+
+
+@pytest.mark.parametrize("packaged", [False, True])
+def test_contextual_yaml_examples_select_records_and_forward_timeout(
+    quickstart, monkeypatch, packaged
+):
+    import urllib.request
+    from io import BytesIO
+
+    import mic
+
+    module, _, _ = quickstart
+    opened = []
+
+    def open_yaml(url, *, timeout):
+        assert url == "https://example.com/tickets.yaml"
+        assert 0 < timeout <= 30
+        stream = BytesIO(snippet("tickets-yaml").encode())
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_yaml)
+    name = "yaml-source-dataset" if packaged else "yaml-context-dataset"
+    exec(snippet(name), module.__dict__)
+    if packaged:
+        source = module.tickets.factory()
+        assert isinstance(source, mic.DatasetSource)
+    assert opened == []
+    inspected = mic.inspect_dataset(
+        module.tickets, limits=mic.ReadLimits(row_count=2, timeout_seconds=30)
+    )
+    assert len(inspected["rows"]) == 2
+    assert inspected["dataset"]["records_seen"] == 2
+    assert not inspected["dataset"]["exhausted"]
+    assert inspected["dataset"]["provenance"]["provider"] == "yaml"
+    assert len(opened) == 1 and opened[0].closed

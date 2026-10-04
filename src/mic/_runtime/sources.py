@@ -1,10 +1,12 @@
 """One lazy, cancellation-safe source driver; no provider registry or dispatch."""
 
 import asyncio
+import inspect
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
+    Awaitable,
     Callable,
     Iterable,
     Iterator,
@@ -16,7 +18,8 @@ from typing import Protocol, cast, runtime_checkable
 from .._async import drain
 from ..errors import ConfigurationError, DatasetError
 from ..models import JsonObject, ReadLimits
-from ..sources import DatasetSource, ReadContext
+from ..sources import DatasetSource
+from .read_context import ReadState, factory_call
 
 
 @runtime_checkable
@@ -43,8 +46,11 @@ def _checked_iterator(value: object) -> Iterator[object] | AsyncIterator[object]
 
 
 class SourceRead:
-    def __init__(self, source: object, limits: ReadLimits) -> None:
-        self.context = ReadContext(limits)
+    def __init__(
+        self, source: object, limits: ReadLimits, *, context: ReadState | None = None
+    ) -> None:
+        self.context = context if context is not None else ReadState(limits)
+        self.exhausted = False
         self._source = source
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mic-source")
         self._iterator: Iterator[object] | AsyncIterator[object] | None = None
@@ -66,6 +72,23 @@ class SourceRead:
                 pass
             raise
 
+    async def resolve(self, factory: object) -> None:
+        call = factory_call(factory, self.context)
+        if inspect.iscoroutinefunction(factory):
+            value = call()
+        else:
+            # Store the result on the worker before cancellation is delivered so
+            # close() can release a generator returned by an abandoned factory.
+            def create() -> object:
+                self._source = call()
+                return self._source
+
+            value = await self._call(create)
+        if inspect.isawaitable(value):
+            self._source = await cast(Awaitable[object], value)
+        else:
+            self._source = value
+
     def _initialize(self) -> None:
         source = self._source
         if isinstance(source, DatasetSource):
@@ -84,27 +107,28 @@ class SourceRead:
         await self._call(self._initialize)
         iterator = self._iterator
         assert iterator is not None
-        while True:
+        while self.context.remaining_rows != 0:
             if isinstance(iterator, AsyncIterator):
                 try:
                     row = await anext(iterator)
                 except StopAsyncIteration:
+                    self.exhausted = True
                     break
             else:
                 present, row = await self._call(lambda: _next(iterator))
                 if not present:
+                    self.exhausted = True
                     break
-            self.context.rows_seen += 1
-            if self.context.rows_seen > self.context.limits.max_rows:
-                raise DatasetError(f"Source exceeds max_rows={self.context.limits.max_rows}")
+            self.context.consumed()
             yield row
 
     async def close(self) -> None:
         try:
-            if isinstance(self._iterator, _AsyncClose):
-                await drain(asyncio.create_task(self._iterator.aclose()))
-            elif isinstance(self._iterator, _Close):
-                await drain(asyncio.create_task(self._call(self._iterator.close)))
+            target = self._iterator if self._iterator is not None else self._source
+            if isinstance(target, _AsyncClose):
+                await drain(asyncio.create_task(target.aclose()))
+            elif isinstance(target, _Close):
+                await drain(asyncio.create_task(self._call(target.close)))
         finally:
             # Every submitted operation has been joined before reaching here.
             self._worker.shutdown(wait=True)

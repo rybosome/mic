@@ -25,7 +25,8 @@ def invoke(*args: str) -> subprocess.CompletedProcess[str]:
 def test_dataset_commands_expose_only_row_and_time_read_limits(command):
     result = invoke(command, "--help")
     assert result.returncode == 0
-    assert "--max-rows" in result.stdout
+    assert "--limit" in result.stdout
+    assert "--max-rows" not in result.stdout
     assert "--dataset-timeout" in result.stdout
     assert "--max-bytes" not in result.stdout
     assert "--max-record-bytes" not in result.stdout

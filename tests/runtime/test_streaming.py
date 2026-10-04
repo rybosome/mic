@@ -368,10 +368,14 @@ def test_sink_failure_is_visible_and_healthy_sinks_finalize(phase, tmp_path) -> 
 def test_mapping_time_consumes_source_budget_and_joins_mapper(monkeypatch):
     from types import SimpleNamespace
 
-    from mic._runtime import datasets
+    from mic import sources
 
     clock = [0.0]
-    monkeypatch.setattr(datasets, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
+    from mic._runtime import read_context
+
+    fake_time = SimpleNamespace(perf_counter=lambda: clock[0])
+    monkeypatch.setattr(sources, "time", fake_time)
+    monkeypatch.setattr(read_context, "time", fake_time)
     calls = []
 
     def slow_map(raw):
@@ -383,7 +387,7 @@ def test_mapping_time_consumes_source_budget_and_joins_mapper(monkeypatch):
 
     spec = evaluation([row()], task=lambda value: calls.append("task") or value)
     spec = replace(spec, dataset=replace(spec.dataset, map_row=slow_map))
-    result = mic.run(spec)
+    result = mic.run(spec, limits=mic.ReadLimits(timeout_seconds=60))
     assert result.exit_code == 2
     assert calls == ["mapped"]
     assert result.summary.trials.planned == 0
@@ -437,11 +441,12 @@ def test_receipt_error_must_fit_the_bounded_serializable_contract(error):
     assert result.sinks[-1].error.phase == "sink_finish"
 
 
-def test_read_cap_records_consumed_probe_and_effective_source_limits():
-    result = mic.run(evaluation([row(), row(2)]), limits=mic.ReadLimits(max_rows=1))
+def test_selection_records_effective_source_limits():
+    result = mic.run(evaluation([row(), row(2)]), limits=mic.ReadLimits(row_count=1))
     source_id, source = next(iter(result.sources.items()))
-    assert result.exit_code == 2
-    assert source.records_seen == 2
+    assert result.exit_code == 0
+    assert source.records_seen == 1
+    assert not source.exhausted
     assert source.records_accepted == 1 and source.records_rejected == 0
     assert result.info.tasks["runtime"]["source_id"] == source_id
-    assert result.info.tasks["runtime"]["limits"]["max_rows"] == 1
+    assert result.info.tasks["runtime"]["limits"]["row_count"] == 1

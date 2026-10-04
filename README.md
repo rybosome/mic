@@ -11,14 +11,8 @@ and streams results with optional local evidence.
 Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
 ```console
-uv venv --python 3.12
-source .venv/bin/activate
-uv pip install mic-evals
+uv add mic-evals
 ```
-
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
-Already using a virtual environment? Skip its creation and activation.
-You can substitute `python -m pip install` for `uv pip install`.
 
 ## Quickstart: evaluate a support-ticket classifier
 
@@ -27,7 +21,7 @@ and **the code to call**. This example classifies tickets as bugs, feature reque
 or questions.
 
 ```console
-uv pip install 'mic-evals[pydantic]' openai
+uv add 'mic-evals[pydantic]' openai
 ```
 
 Set `OPENAI_API_KEY` in your environment. Running this example sends tickets to
@@ -186,7 +180,7 @@ running the task. The scorer, task, and run commands do not change.
 ### BigQuery
 
 ```console
-uv pip install 'mic-evals[bigquery]'
+uv add 'mic-evals[bigquery]'
 ```
 
 Configure Application Default Credentials. Replace the dataset factory with this
@@ -215,7 +209,7 @@ def tickets() -> BigQueryHandle:
 ### Braintrust
 
 ```console
-uv pip install 'mic-evals[braintrust]'
+uv add 'mic-evals[braintrust]'
 ```
 
 Set `BRAINTRUST_API_KEY`. Use an existing dataset with the same `input` and
@@ -239,51 +233,123 @@ See [provider setup and limits](docs/providers.md).
 
 ### Custom sources
 
-A dataset factory can return a generator, async iterator, or a `mic.DatasetSource`.
-Mic reads and validates records as capacity becomes available; it does not first
-save a full snapshot.
-
-Here is a simplified YAML source: one document per case, separated by `---`.
+Here is a simple reader for YAML documents delimited by `---`. Install `pyyaml`:
 
 ```console
 uv add pyyaml
 ```
 
+Save these tickets as `tickets.yaml`:
+
+<!-- snippet: tickets-yaml -->
+```yaml
+id: upload
+input:
+  subject: PDF upload
+  body: The app closes whenever I upload a PDF.
+expected:
+  label: bug
+---
+id: export
+input:
+  subject: Invoice export
+  body: Can you add an option to export invoices?
+expected:
+  label: feature
+---
+id: invoice
+input:
+  subject: Past invoice
+  body: Where can I download last month's invoice?
+expected:
+  label: question
+```
+
+Start with a factory that yields records.
+
 <!-- snippet: yaml-dataset -->
 ```python
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 
 import mic
+import yaml
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets() -> Iterator[object]:
+    path = Path(__file__).with_name("tickets.yaml")
+    with path.open("rb") as stream:
+        try:
+            yield from yaml.safe_load_all(stream)
+        except yaml.YAMLError:
+            raise mic.DatasetError("Invalid YAML document stream") from None
+```
+
+For greater control over runtime behavior, accept `ctx` to pass the remaining
+row selection and read time into the reader:
+
+<!-- snippet: yaml-context-dataset -->
+```python
+from collections.abc import Iterator
+from itertools import islice
+from urllib.request import urlopen
+
+import mic
+import yaml
+
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets(ctx: mic.ReadContext) -> Iterator[object]:
+    url = "https://example.com/tickets.yaml"
+    ctx.set_provenance(provider="yaml", url=url)
+    timeout = ctx.remaining_seconds
+    if timeout is not None and timeout <= 0:
+        raise TimeoutError
+    with urlopen(url, timeout=timeout) as stream:
+        try:
+            yield from islice(yaml.safe_load_all(stream), ctx.remaining_rows)
+        except yaml.YAMLError:
+            raise mic.DatasetError("Invalid YAML document stream") from None
+```
+
+To package either style as a reusable, configurable source, implement
+`mic.DatasetSource`:
+
+<!-- snippet: yaml-source-dataset -->
+```python
+from collections.abc import Iterator
+from dataclasses import dataclass
+from itertools import islice
+from urllib.request import urlopen
+
+import mic
+import yaml
 
 
 @dataclass(frozen=True)
 class YamlDocuments(mic.DatasetSource):
-    path: Path
+    url: str
 
     def read(self, ctx: mic.ReadContext) -> Iterator[object]:
-        import yaml
-
-        ctx.set_provenance(provider="yaml", path=str(self.path))
-        # Open only when reading, and close on exhaustion or early exit.
-        with self.path.open("rb") as stream:
+        ctx.set_provenance(provider="yaml", url=self.url)
+        timeout = ctx.remaining_seconds
+        if timeout is not None and timeout <= 0:
+            raise TimeoutError
+        with urlopen(self.url, timeout=timeout) as stream:
             try:
-                yield from yaml.safe_load_all(stream)
+                yield from islice(yaml.safe_load_all(stream), ctx.remaining_rows)
             except yaml.YAMLError:
-                # Parser errors can contain private source excerpts.
                 raise mic.DatasetError("Invalid YAML document stream") from None
 
 
 @mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> YamlDocuments:
-    return YamlDocuments(Path(__file__).with_name("tickets.yaml"))
+    return YamlDocuments("https://example.com/tickets.yaml")
 ```
 
-`read(ctx)` yields raw records; Mic handles schema validation and execution.
-Built-in providers use the [same contract](docs/providers.md#custom-sources),
-without registration. For additional YAML safeguards (aliases, duplicate keys,
-and parser depth/node limits), see [`yaml_source.py`](examples/yaml_source.py).
+See [custom source contracts](docs/providers.md#custom-sources) for context,
+resource ownership, and timeout semantics.
 
 ## Scoring: multiple metrics and supporting evidence
 
@@ -400,7 +466,7 @@ mic run ticket_eval:classify \
 ```
 
 See [execution controls and limits](docs/cli.md#execution-controls-and-limits)
-for safety caps and timeout behavior.
+for row selection, execution caps, and timeout behavior.
 
 ### Turn scores into pass/fail requirements
 
@@ -411,13 +477,13 @@ With both scorers from the preceding section attached:
 mic run ticket_eval:classify \
   --trials 5 \
   --require 'tasks["classify"].scores["accuracy"].mean>=0.9' \
-  --require 'tasks["classify"].scores["bug_recall"].mean>=0.95'
+  --require 'tasks["classify"].scores["bug_recall"].mean>=0.95' \
+  --require 'tasks["classify"].scores["bug_recall"].count>=5' \
+  --require 'trials.task_failed==0' \
+  --require 'trials.task_ms.max<=2000'
 ```
 
-Select `.mean`, `.min`, `.max`, or `.count` explicitly. You can also require
-`trials.task_failed == 0` or `trials.task_ms.max <= 2000`.
-All requirements must pass; comparisons support `>=`, `>`, `<=`, `<`, `==`, and `!=`.
-Missing numeric observations fail the requirement. See [quality gates](docs/cli.md#quality-gates) for full semantics.
+See [quality gates](docs/cli.md#quality-gates) for full semantics.
 
 ### Inspect or automate the results
 
@@ -473,12 +539,7 @@ result = await mic.arun(
 result.summary.tasks["classify"].scores
 ```
 
-Either runner supports sync and async tasks. No files are written by default;
-add `output=".mic/tickets"` to record events and a final summary. Records are
-validated and task/scorer work is pipelined as the source is read. Use
-`on_invalid="skip"` (CLI: `--on-invalid skip`) to skip malformed records.
-Pass a list of evaluations to either runner to share dataset reads and a global
-concurrency limit; the CLI equivalent is `mic run "module:*"`.
+Either runner supports sync and async tasks.
 See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
 
 ## Notes and documentation

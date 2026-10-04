@@ -19,6 +19,8 @@ _O = TypeVar("_O")
 if TYPE_CHECKING:
     from typing_extensions import TypeVar as DefaultTypeVar
 
+    from .sources import ReadContext
+
     _E = DefaultTypeVar("_E", default=_O)
     _M = DefaultTypeVar("_M", default=JsonObject)
 else:
@@ -53,13 +55,13 @@ class CaseSchema[I, E, M]:
 
 @dataclass(frozen=True)
 class ReadLimits:
-    max_rows: int = 10_000
-    timeout_seconds: float = 60.0
+    row_count: int | None = None
+    timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if type(self.max_rows) is not int or self.max_rows <= 0:
-            raise ConfigurationError("max_rows must be a positive integer")
-        if (
+        if self.row_count is not None and (type(self.row_count) is not int or self.row_count <= 0):
+            raise ConfigurationError("row_count must be a positive integer")
+        if self.timeout_seconds is not None and (
             isinstance(self.timeout_seconds, bool)
             or not math.isfinite(self.timeout_seconds)
             or self.timeout_seconds <= 0
@@ -116,7 +118,9 @@ class TaskResult[O]:
 type Task[I, O, M] = Callable[[TaskContext[M], I], O | TaskResult[O] | Awaitable[O | TaskResult[O]]]
 type ScoreValue = Score | float | int | None
 type Scoring[I, O, E, M] = Callable[[ScoreContext[I, O, E, M]], ScoreValue | Awaitable[ScoreValue]]
-type SourceFactory = Callable[[], object | Awaitable[object]]
+type SourceFactory = (
+    Callable[[], object | Awaitable[object]] | Callable[["ReadContext"], object | Awaitable[object]]
+)
 type RowMapper = Callable[[object], RawCase]
 
 
@@ -126,6 +130,12 @@ class Dataset[I, E, M]:
     schema: CaseSchema[I, E, M]
     factory: SourceFactory = field(repr=False)
     map_row: RowMapper = field(repr=False)
+
+    def __post_init__(self) -> None:
+        from ._runtime.read_context import factory_call
+        from .sources import ReadContext
+
+        factory_call(self.factory, ReadContext(ReadLimits()))
 
 
 @dataclass(frozen=True)

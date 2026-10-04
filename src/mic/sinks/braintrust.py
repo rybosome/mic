@@ -172,7 +172,7 @@ class _Session:
             "experiment": sink.experiment or f"mic-{self.run.run_id}",
             "set_current": False,
             "update": False,
-            "metadata": {"mic_run_id": self.run.run_id, "mic_schema_version": "mic-run-v3"},
+            "metadata": {"mic_run_id": self.run.run_id, "mic_schema_version": "mic-run-v4"},
         }
         for key, value in {
             "api_key": self._api_key or os.environ.get("BRAINTRUST_API_KEY"),

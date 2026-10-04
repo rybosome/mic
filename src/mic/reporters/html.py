@@ -75,8 +75,8 @@ def write_report(
         if len(data) > max_bytes:
             raise ConfigurationError("Report exceeds max_bytes")
         manifest = json_object(loads(data))
-        if manifest.get("schema_version") != "mic-run-v3":
-            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v3")
+        if manifest.get("schema_version") != "mic-run-v4":
+            raise ConfigurationError("Unsupported run artifact schema; expected mic-run-v4")
         if manifest.get("status") not in ("completed", "failed", "cancelled"):
             raise ConfigurationError("Run evidence has not been finalized")
         check_manifest(manifest)

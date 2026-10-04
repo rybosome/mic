@@ -112,21 +112,22 @@ async def test_protocol_failures(responses, match):
 
 
 @pytest.mark.asyncio
-async def test_empty_dataset_and_full_cap_uses_terminal_probe():
+async def test_empty_dataset_and_selection_without_terminal_probe():
     rows, provenance = await collect(Fixture([page([])]))
     assert rows == []
     assert provenance["pages"] == 1
     fixture = Fixture([page([{"id": "a", "input": 1}], "a"), page([])])
-    rows, _ = await collect(fixture, limits=ReadLimits(max_rows=1))
+    rows, _ = await collect(fixture, limits=ReadLimits(row_count=1))
     assert len(rows) == 1
-    assert json.loads(fixture.requests[1].content)["query"]["limit"] == 1
+    assert len(fixture.requests) == 1
+    assert json.loads(fixture.requests[0].content)["query"]["limit"] == 1
 
 
 @pytest.mark.asyncio
 async def test_row_and_server_page_caps():
     fixture = Fixture([page([{"id": "a", "input": 1}, {"id": "b", "input": 2}], "cursor")])
-    with pytest.raises(DatasetError, match="max_rows=1"):
-        await collect(fixture, limits=ReadLimits(max_rows=1))
+    rows, _ = await collect(fixture, limits=ReadLimits(row_count=1))
+    assert len(rows) == 1
     fixture = Fixture([page([{"id": "a", "input": 1}, {"id": "b", "input": 2}], "cursor")])
     with pytest.raises(DatasetError, match="exceeded requested page limit"):
         await collect(fixture, source=handle(page_size=1))
