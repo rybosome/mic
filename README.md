@@ -10,16 +10,9 @@ and streams results with optional local evidence.
 
 Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
-In a new project directory:
-
 ```console
-uv init --python 3.12
 uv add mic-evals
-source .venv/bin/activate
 ```
-
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
-In an existing uv project, skip `uv init`.
 
 ## Quickstart: evaluate a support-ticket classifier
 
