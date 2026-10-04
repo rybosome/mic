@@ -12,7 +12,7 @@ from mic.errors import DatasetError
 from mic.models import ReadLimits
 from mic.providers.bigquery import BigQueryHandle
 from mic.providers.braintrust import BraintrustHandle
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONLFileHandle
 from mic.sources import DatasetSource
 from tests.datasets.helpers import collect_dataset
 
@@ -57,7 +57,7 @@ def source_fixture(kind, rows, tmp_path):
     if kind == "file":
         path = tmp_path / "fixture.jsonl"
         path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
-        return FileHandle(path)
+        return JSONLFileHandle(path)
     if kind == "bigquery":
         return BigQueryHandle(
             "billing-project",

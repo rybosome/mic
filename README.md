@@ -166,16 +166,19 @@ Replace the quickstart's `tickets` factory and add these imports:
 ```python
 from pathlib import Path
 
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONLFileHandle
 
 
 @mic.dataset(input=Ticket, expected=Classification)
-def tickets() -> FileHandle:
-    return FileHandle(Path(__file__).with_name("tickets.jsonl"))
+def tickets() -> JSONLFileHandle:
+    return JSONLFileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
 Mic hydrates the JSON objects into your declared types and validates cases before
 running the task. The scorer, task, and run commands do not change.
+For JSON arrays, use `JSONFileHandle(path)`. For an export such as
+`{"items": [...]}`, use `JSONFileHandle(path, records_key="items")`. See
+[local file contracts and custom row mapping](docs/providers.md#local-files).
 
 ### BigQuery
 

@@ -4,14 +4,14 @@ from pathlib import Path
 
 import mic
 from mic import JsonValue, ScoreContext, TaskContext
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONLFileHandle
 
 type Meta = dict[str, JsonValue]
 
 
 @mic.dataset(name="triage", schema=mic.case_schema(input=str, expected=str, metadata=Meta))
-def triage_data() -> FileHandle:
-    return FileHandle(Path(__file__).parent / "fixtures" / "triage.jsonl")
+def triage_data() -> JSONLFileHandle:
+    return JSONLFileHandle(Path(__file__).parent / "fixtures" / "triage.jsonl")
 
 
 @mic.scorer(name="exact", requires_expected=True)

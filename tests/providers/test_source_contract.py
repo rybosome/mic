@@ -12,10 +12,12 @@ import pytest
 import mic
 from examples.yaml_source import YamlDocuments
 from mic._runtime.sources import open_source
-from mic.providers import BigQueryHandle, BraintrustHandle, FileHandle
+from mic.providers import BigQueryHandle, BraintrustHandle, JSONFileHandle, JSONLFileHandle
 
 
-@pytest.mark.parametrize("source", [BigQueryHandle, BraintrustHandle, FileHandle, YamlDocuments])
+@pytest.mark.parametrize(
+    "source", [BigQueryHandle, BraintrustHandle, JSONFileHandle, JSONLFileHandle, YamlDocuments]
+)
 def test_sources_implement_only_public_contract(source) -> None:
     assert issubclass(source, mic.DatasetSource)
     path = Path(__import__(source.__module__, fromlist=["__file__"]).__file__)
@@ -184,7 +186,7 @@ async def test_invalid_array_framing_is_fatal(tmp_path, data) -> None:
     path = tmp_path / "bad.json"
     path.write_text(data, encoding="utf-8")
     with pytest.raises(mic.DatasetError):
-        async with open_source(FileHandle(path), limits=mic.ReadLimits()) as read:
+        async with open_source(JSONFileHandle(path), limits=mic.ReadLimits()) as read:
             _ = [row async for row in read.rows()]
 
 
@@ -194,7 +196,7 @@ async def test_array_reader_handles_nested_escaped_and_utf8_records_incrementall
     path = tmp_path / "cases.json"
     rows = [{"input": {"text": 'é ] \\"', "nested": [[1, 2]]}}] * 1000
     path.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-    async with open_source(FileHandle(path), limits=mic.ReadLimits()) as read:
+    async with open_source(JSONFileHandle(path), limits=mic.ReadLimits()) as read:
         iterator = read.rows()
         first = await anext(iterator)
         assert first["input"] == rows[0]["input"]
