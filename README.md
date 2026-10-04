@@ -51,27 +51,26 @@ class Classification(BaseModel):
 
 
 @mic.dataset(input=Ticket, expected=Classification)
-def tickets() -> list[mic.RawCase]:
+def tickets() -> list[tuple[Ticket, Classification]]:
     return [
-        mic.RawCase(
-            id="upload",
-            input=Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
-            expected=Classification(label="bug"),
+        (
+            Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
+            Classification(label="bug"),
         ),
-        mic.RawCase(
-            id="export",
-            input=Ticket(
-                subject="Invoice export", body="Can you add an option to export invoices?"
-            ),
-            expected=Classification(label="feature"),
+        (
+            Ticket(subject="Invoice export", body="Can you add an option to export invoices?"),
+            Classification(label="feature"),
         ),
-        mic.RawCase(
-            id="invoice",
-            input=Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
-            expected=Classification(label="question"),
+        (
+            Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
+            Classification(label="question"),
         ),
     ]
 ```
+
+Each tuple is `(input, expected)`. Mic generates case IDs automatically. Use
+`mic.RawCase(input=..., expected=..., id=..., metadata=...)` when a case needs
+a label or metadata.
 
 ### 2. Define the scoring
 
@@ -155,9 +154,9 @@ Save these records as `tickets.jsonl` beside `ticket_eval.py`:
 
 <!-- snippet: tickets-jsonl -->
 ```jsonl
-{"id":"upload","input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
-{"id":"export","input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
-{"id":"invoice","input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
+{"input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
+{"input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
+{"input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
 ```
 
 Replace the quickstart's `tickets` factory and add these imports:
@@ -246,21 +245,18 @@ Save these tickets as `tickets.yaml`:
 
 <!-- snippet: tickets-yaml -->
 ```yaml
-id: upload
 input:
   subject: PDF upload
   body: The app closes whenever I upload a PDF.
 expected:
   label: bug
 ---
-id: export
 input:
   subject: Invoice export
   body: Can you add an option to export invoices?
 expected:
   label: feature
 ---
-id: invoice
 input:
   subject: Past invoice
   body: Where can I download last month's invoice?
