@@ -444,10 +444,9 @@ def test_contextual_yaml_examples_select_records_and_forward_timeout(
         return stream
 
     monkeypatch.setattr(urllib.request, "urlopen", open_yaml)
-    exec(snippet("yaml-dataset"), module.__dict__)
-    exec(snippet("yaml-context-dataset"), module.__dict__)
+    name = "yaml-source-dataset" if packaged else "yaml-context-dataset"
+    exec(snippet(name), module.__dict__)
     if packaged:
-        exec(snippet("yaml-source-dataset"), module.__dict__)
         source = module.tickets.factory()
         assert isinstance(source, mic.DatasetSource)
     assert opened == []

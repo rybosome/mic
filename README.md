@@ -270,11 +270,17 @@ read time into the reader:
 
 <!-- snippet: yaml-context-dataset -->
 ```python
+from collections.abc import Iterator
 from itertools import islice
 from urllib.request import urlopen
 
+import mic
+import yaml
 
-def read_yaml(url: str, ctx: mic.ReadContext) -> Iterator[object]:
+
+@mic.dataset(input=Ticket, expected=Classification)
+def tickets(ctx: mic.ReadContext) -> Iterator[object]:
+    url = "https://example.com/tickets.yaml"
     ctx.set_provenance(provider="yaml", url=url)
     timeout = ctx.remaining_seconds
     if timeout is not None and timeout <= 0:
@@ -284,20 +290,21 @@ def read_yaml(url: str, ctx: mic.ReadContext) -> Iterator[object]:
             yield from islice(yaml.safe_load_all(stream), ctx.remaining_rows)
         except yaml.YAMLError:
             raise mic.DatasetError("Invalid YAML document stream") from None
-
-
-@mic.dataset(input=Ticket, expected=Classification)
-def tickets(ctx: mic.ReadContext) -> Iterator[object]:
-    yield from read_yaml("https://example.com/tickets.yaml", ctx)
 ```
 
 To package either style as a reusable, configurable source, implement
-`mic.DatasetSource`. Here the URL becomes configuration, and `read` reuses the
-reader above:
+`mic.DatasetSource`. Here the URL becomes configuration, and the reading logic
+moves into `read`:
 
 <!-- snippet: yaml-source-dataset -->
 ```python
+from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import islice
+from urllib.request import urlopen
+
+import mic
+import yaml
 
 
 @dataclass(frozen=True)
@@ -305,7 +312,15 @@ class YamlDocuments(mic.DatasetSource):
     url: str
 
     def read(self, ctx: mic.ReadContext) -> Iterator[object]:
-        return read_yaml(self.url, ctx)
+        ctx.set_provenance(provider="yaml", url=self.url)
+        timeout = ctx.remaining_seconds
+        if timeout is not None and timeout <= 0:
+            raise TimeoutError
+        with urlopen(self.url, timeout=timeout) as stream:
+            try:
+                yield from islice(yaml.safe_load_all(stream), ctx.remaining_rows)
+            except yaml.YAMLError:
+                raise mic.DatasetError("Invalid YAML document stream") from None
 
 
 @mic.dataset(input=Ticket, expected=Classification)
@@ -504,12 +519,7 @@ result = await mic.arun(
 result.summary.tasks["classify"].scores
 ```
 
-Either runner supports sync and async tasks. No files are written by default;
-add `output=".mic/tickets"` to record events and a final summary. Records are
-validated and task/scorer work is pipelined as the source is read. Use
-`on_invalid="skip"` (CLI: `--on-invalid skip`) to skip malformed records.
-Pass a list of evaluations to either runner to share dataset reads and a global
-concurrency limit; the CLI equivalent is `mic run "module:*"`.
+Either runner supports sync and async tasks.
 See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
 
 ## Notes and documentation
