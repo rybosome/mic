@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 import mic
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONLFileHandle
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +62,8 @@ def tickets() -> list[mic.RawCase]:
 
 
 @mic.dataset(name="structured.file", schema=case_types)
-def file_tickets() -> FileHandle:
-    return FileHandle(Path(__file__).parent / "fixtures" / "structured.jsonl")
+def file_tickets() -> JSONLFileHandle:
+    return JSONLFileHandle(Path(__file__).parent / "fixtures" / "structured.jsonl")
 
 
 @mic.scorer(name="label")

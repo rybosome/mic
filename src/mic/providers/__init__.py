@@ -2,6 +2,12 @@
 
 from .bigquery import BigQueryHandle, BigQueryParameter
 from .braintrust import BraintrustHandle
-from .files import FileHandle
+from .files import JSONFileHandle, JSONLFileHandle
 
-__all__ = ["BigQueryHandle", "BigQueryParameter", "BraintrustHandle", "FileHandle"]
+__all__ = [
+    "BigQueryHandle",
+    "BigQueryParameter",
+    "BraintrustHandle",
+    "JSONFileHandle",
+    "JSONLFileHandle",
+]

@@ -72,26 +72,83 @@ hard responsiveness matters.
 
 ```python
 from pathlib import Path
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONFileHandle, JSONLFileHandle
 
-FileHandle(Path("fixtures/triage.jsonl"))
-FileHandle("fixtures/cases.json", format="json")
+JSONLFileHandle(Path("fixtures/triage.jsonl"))
+JSONFileHandle("fixtures/cases.json")
+JSONFileHandle("fixtures/export.json", records_key="items")
 ```
 
-`FileHandle(path, format=None)` accepts `Path` or string. `.jsonl` and `.ndjson`
-extensions select JSONL; other paths default to a JSON array. An explicit format
-is either `"json"` or `"jsonl"`. JSONL is read one line at a time. A JSON
-array is framed and parsed one record at a time, without loading the whole array.
+Both handles accept `Path` or string and read their declared format regardless of
+filename suffix. `JSONLFileHandle(path)` reads one JSON object per nonblank line,
+including `.ndjson` files. `JSONFileHandle(path, *, records_key=None)` reads a
+JSON array one record at a time, without loading the whole array.
 
-Blank JSONL lines are skipped. Malformed JSON, duplicate object keys, nonfinite
-numbers, non-object rows, and invalid source provenance are record errors.
-Recoverable framed records can be skipped with `on_invalid="skip"`; broken
-framing aborts. Physical coordinates appear in accepted-record provenance. Custom columns are retained for mappers. Physical file path, row number,
-and JSONL line number are added to each source row's `provenance`.
+Set `records_key="items"` for a document such as:
+
+```json
+{
+  "version": 1,
+  "items": [{"input": "ticket", "expected": "bug"}],
+  "description": "Ticket classification cases"
+}
+```
+
+The key is an exact top-level member name, including literal dots or an empty
+string; it is not a path expression. The selected value must be an array of
+objects. Empty arrays are valid. Other fields can precede or follow it and are
+validated and discarded incrementally. There is no automatic key detection or
+whole-document mapper. Without `records_key`, the document must be an array.
+
+Use the dataset's `map_row` for exports whose records have different columns.
+The reader preserves custom columns and adds physical provenance; a custom mapper
+must forward that provenance if it wants to retain it:
+
+```python
+import mic
+from mic.providers.files import JSONFileHandle
+
+
+def map_export(row: object) -> mic.RawCase:
+    if not isinstance(row, dict):
+        raise TypeError("Expected an export record")
+    return mic.RawCase(
+        input=row["question"],
+        expected=row["answer"],
+        provenance=row["provenance"],
+    )
+
+
+@mic.dataset(input=str, expected=str, map_row=map_export)
+def exported_cases() -> JSONFileHandle:
+    return JSONFileHandle("export.json", records_key="items")
+```
+
+Malformed JSON, duplicate object keys, nonfinite numbers, non-object rows, and
+invalid source provenance are record errors. Recoverable framed records can be
+skipped with `on_invalid="skip"`; broken framing aborts. Wrapper syntax errors,
+duplicate wrapper keys, a missing selected key, and a non-array selected value
+are source errors and cannot be skipped. Wrapper errors omit source contents.
+Physical file path and one-based source row number are added to each row's
+`provenance`; JSONL also adds its one-based physical line number. Read-level
+provenance includes the selected `records_key` when supplied.
+
+Each selected record must fit in memory. Wrapper traversal retains individual
+scalar values and the keys of active objects to detect duplicates, but does not
+retain unselected arrays or object values. Unselected wrapper values have a
+maximum nesting depth of 128 container levels. These limits apply independently
+of the selected records' existing JSON decoder limits.
 
 A complete file read records `raw_sha256`, `raw_bytes`, and
-`read_complete=true`. A selected JSONL prefix records `raw_prefix_sha256` and
-`read_complete=false`, so it cannot be mistaken for a complete-file digest.
+`read_complete=true`. A selected prefix records `raw_prefix_sha256` and does not
+claim source exhaustion or validate the unread suffix. JSON parser read-ahead is
+included in the consumed-byte digest; it need not end at the selected row's exact
+boundary. `read_complete` means the underlying reader observed EOF, independently
+of whether iteration validated the entire document. Handles open a fresh file per
+read and close it on exhaustion, failure, or early exit.
+
+**Breaking API change:** use `JSONLFileHandle(path)` or `JSONFileHandle(path)` in
+place of the former generic file handle. Format is now explicit in the class name.
 
 ## BigQuery
 

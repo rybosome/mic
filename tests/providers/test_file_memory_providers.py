@@ -6,12 +6,13 @@ import pytest
 from mic._runtime.sources import open_source
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import ReadLimits
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONFileHandle, JSONLFileHandle
 from mic.sources import RecordError
 
 
 async def file_rows(path: Path, limits: ReadLimits = ReadLimits()):
-    async with open_source(FileHandle(path), limits=limits) as read:
+    source = JSONFileHandle(path) if path.suffix == ".json" else JSONLFileHandle(path)
+    async with open_source(source, limits=limits) as read:
         rows = [row async for row in read.rows()]
         return rows, read.provenance
 
@@ -94,7 +95,7 @@ async def test_file_closes_when_consumer_stops_or_raises(tmp_path):
     path = tmp_path / "cases.jsonl"
     path.write_text('{"input":1}\n{"input":2}', encoding="utf-8")
     with pytest.raises(RuntimeError):
-        async with open_source(FileHandle(path), limits=ReadLimits()) as read:
+        async with open_source(JSONLFileHandle(path), limits=ReadLimits()) as read:
             async for _ in read.rows():
                 break
             raise RuntimeError("consumer")
@@ -160,7 +161,7 @@ async def test_memory_closes_generators_on_prefix_and_validation_failure():
 async def test_jsonl_prefix_provenance_does_not_claim_full_file_digest(tmp_path):
     path = tmp_path / "cases.jsonl"
     path.write_text('{"input":1}\n{"input":2}\n', encoding="utf-8")
-    async with open_source(FileHandle(path), limits=ReadLimits()) as read:
+    async with open_source(JSONLFileHandle(path), limits=ReadLimits()) as read:
         async for _ in read.rows():
             break
     assert read.provenance["read_complete"] is False

@@ -26,6 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSPECT_INSTALL = """import importlib.util, importlib.metadata, json, mic, sys
 from typing import get_args
+from mic.providers import JSONFileHandle, JSONLFileHandle
+
+assert JSONFileHandle("unopened.json", records_key="items").records_key == "items"
+assert JSONLFileHandle("unopened.jsonl").path == "unopened.jsonl"
 
 assert get_args(mic.TaskContext[mic.JsonObject]) == (mic.JsonObject,)
 assert get_args(mic.ScoreContext[str, int]) == (str, int, int, mic.JsonObject)

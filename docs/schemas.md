@@ -89,7 +89,7 @@ task as returning `Decision` and returning a `Decision` retains static checking 
 
 ```python
 from pathlib import Path
-from mic.providers.files import FileHandle
+from mic.providers.files import JSONLFileHandle
 from mic.providers.bigquery import BigQueryHandle
 from mic.providers.braintrust import BraintrustHandle
 
@@ -97,8 +97,8 @@ case_types = mic.case_schema(input=Ticket, expected=Decision)
 
 
 @mic.dataset(name="tickets.file", schema=case_types)
-def file_tickets() -> FileHandle:
-    return FileHandle(Path(__file__).with_name("tickets.jsonl"))
+def file_tickets() -> JSONLFileHandle:
+    return JSONLFileHandle(Path(__file__).with_name("tickets.jsonl"))
 
 
 @mic.dataset(name="tickets.bigquery", schema=case_types)

@@ -2,46 +2,64 @@
 
 import hashlib
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import BinaryIO, cast
 
 from mic.errors import ConfigurationError, DatasetError
 from mic.models import JsonObject
 from mic.sources import DatasetSource, ReadContext, RecordError
 
 from ._io import parse_json
+from ._json_stream import array_records
 
 
 @dataclass(frozen=True)
-class FileHandle(DatasetSource):
+class JSONLFileHandle(DatasetSource):
+    """Read one JSON object per nonblank physical line, regardless of suffix."""
+
     path: Path | str
-    format: Literal["json", "jsonl"] | None = None
 
     def read(self, ctx: ReadContext) -> Iterator[object]:
         path = Path(self.path).expanduser().resolve()
-        format = self.format or (
-            "jsonl" if path.suffix.lower() in {".jsonl", ".ndjson"} else "json"
-        )
-        if format not in {"json", "jsonl"}:
-            raise ConfigurationError(f"unsupported file format {format!r}")
-        ctx.set_provenance(provider="file", path=str(path), format=format)
+        ctx.set_provenance(provider="file", path=str(path), format="jsonl")
         try:
             with path.open("rb") as raw:
                 stream = _FileReader(raw, ctx)
-                if format == "json":
-                    for index, data in enumerate(_array_records(stream), start=1):
-                        yield _record(data, path, index)
-                else:
-                    line_number = 0
-                    index = 0
-                    while data := stream.readline():
-                        line_number += 1
-                        payload = data.rstrip(b"\r\n")
-                        if not payload.strip():
-                            continue
-                        index += 1
-                        yield _record(payload, path, index, line=line_number)
+                line_number = 0
+                index = 0
+                while data := stream.readline():
+                    line_number += 1
+                    payload = data.rstrip(b"\r\n")
+                    if not payload.strip():
+                        continue
+                    index += 1
+                    yield _record(payload, path, index, line=line_number)
+        except OSError:
+            raise DatasetError("Could not read dataset file") from None
+
+
+@dataclass(frozen=True)
+class JSONFileHandle(DatasetSource):
+    """Read an array of objects, optionally under an exact top-level object key."""
+
+    path: Path | str
+    records_key: str | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.records_key is not None and not isinstance(cast(object, self.records_key), str):
+            raise ConfigurationError("records_key must be a string or None")
+
+    def read(self, ctx: ReadContext) -> Iterator[object]:
+        path = Path(self.path).expanduser().resolve()
+        ctx.set_provenance(provider="file", path=str(path), format="json")
+        if self.records_key is not None:
+            ctx.set_provenance(records_key=self.records_key)
+        try:
+            with path.open("rb") as raw:
+                stream = _FileReader(raw, ctx)
+                for index, data in enumerate(array_records(stream, self.records_key), start=1):
+                    yield _record(data, path, index)
         except OSError:
             raise DatasetError("Could not read dataset file") from None
 
@@ -61,60 +79,6 @@ def _record(data: bytes, path: Path, index: int, *, line: int | None = None) -> 
         return {**row, "provenance": provenance}
     except DatasetError as exc:
         return RecordError(str(exc))
-
-
-def _array_records(stream: "_FileReader") -> Iterator[bytes]:
-    """Frame one JSON value at a time, without decoding the surrounding array.
-
-    Framing errors abort: without a reliable boundary it is unsafe to skip ahead.
-    Individual framed values still pass through the strict JSON decoder.
-    """
-    started = ended = quoted = escaped = False
-    depth = 0
-    after_comma = False
-    record = bytearray()
-    while chunk := stream.read(8192):
-        for byte in chunk:
-            if not started:
-                if byte in b" \t\r\n":
-                    continue
-                if byte != ord("["):
-                    raise DatasetError("JSON file must contain an array of case objects")
-                started = True
-                continue
-            if ended:
-                if byte not in b" \t\r\n":
-                    raise DatasetError("Unexpected content after JSON array")
-                continue
-            if not quoted and depth == 0 and byte in b",]":
-                payload = bytes(record).strip()
-                if payload:
-                    yield payload
-                elif byte == ord(",") or after_comma:
-                    raise DatasetError("Empty record or trailing comma in JSON array")
-                record.clear()
-                after_comma = byte == ord(",")
-                ended = byte == ord("]")
-                continue
-            if quoted:
-                if escaped:
-                    escaped = False
-                elif byte == ord("\\"):
-                    escaped = True
-                elif byte == ord('"'):
-                    quoted = False
-            elif byte == ord('"'):
-                quoted = True
-            elif byte in b"{[":
-                depth += 1
-            elif byte in b"}]":
-                depth -= 1
-                if depth < 0:
-                    raise DatasetError("Unbalanced JSON array record")
-            if record or byte not in b" \t\r\n":
-                record.append(byte)
-    if not ended or depth or quoted:
-        raise DatasetError("Incomplete JSON array")
 
 
 class _FileReader:
