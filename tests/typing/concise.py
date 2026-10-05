@@ -7,8 +7,8 @@ import mic
 
 
 @mic.dataset(input=str, expected=bool)
-def rows() -> list[mic.RawCase]:
-    return [mic.RawCase(input="ticket", expected=True)]
+def rows() -> list[tuple[str, bool]]:
+    return [("ticket", True)]
 
 
 @mic.scorer()

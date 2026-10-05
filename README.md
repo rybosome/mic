@@ -51,24 +51,19 @@ class Classification(BaseModel):
 
 
 @mic.dataset(input=Ticket, expected=Classification)
-def tickets() -> list[mic.RawCase]:
+def tickets() -> list[tuple[Ticket, Classification]]:
     return [
-        mic.RawCase(
-            id="upload",
-            input=Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
-            expected=Classification(label="bug"),
+        (
+            Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
+            Classification(label="bug"),
         ),
-        mic.RawCase(
-            id="export",
-            input=Ticket(
-                subject="Invoice export", body="Can you add an option to export invoices?"
-            ),
-            expected=Classification(label="feature"),
+        (
+            Ticket(subject="Invoice export", body="Can you add an option to export invoices?"),
+            Classification(label="feature"),
         ),
-        mic.RawCase(
-            id="invoice",
-            input=Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
-            expected=Classification(label="question"),
+        (
+            Ticket(subject="Past invoice", body="Where can I download last month's invoice?"),
+            Classification(label="question"),
         ),
     ]
 ```
@@ -155,9 +150,9 @@ Save these records as `tickets.jsonl` beside `ticket_eval.py`:
 
 <!-- snippet: tickets-jsonl -->
 ```jsonl
-{"id":"upload","input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
-{"id":"export","input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
-{"id":"invoice","input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
+{"input":{"subject":"PDF upload","body":"The app closes whenever I upload a PDF."},"expected":{"label":"bug"}}
+{"input":{"subject":"Invoice export","body":"Can you add an option to export invoices?"},"expected":{"label":"feature"}}
+{"input":{"subject":"Past invoice","body":"Where can I download last month's invoice?"},"expected":{"label":"question"}}
 ```
 
 Replace the quickstart's `tickets` factory and add these imports:
@@ -174,10 +169,7 @@ def tickets() -> JSONLFileHandle:
     return JSONLFileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
-Mic hydrates the JSON objects into your declared types and validates cases before
-running the task. The scorer, task, and run commands do not change.
-For JSON arrays, use `JSONFileHandle(path)`. For an export such as
-`{"items": [...]}`, use `JSONFileHandle(path, records_key="items")`. See
+See
 [local file contracts and custom row mapping](docs/providers.md#local-files).
 
 ### BigQuery
@@ -246,21 +238,18 @@ Save these tickets as `tickets.yaml`:
 
 <!-- snippet: tickets-yaml -->
 ```yaml
-id: upload
 input:
   subject: PDF upload
   body: The app closes whenever I upload a PDF.
 expected:
   label: bug
 ---
-id: export
 input:
   subject: Invoice export
   body: Can you add an option to export invoices?
 expected:
   label: feature
 ---
-id: invoice
 input:
   subject: Past invoice
   body: Where can I download last month's invoice?

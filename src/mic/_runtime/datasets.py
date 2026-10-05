@@ -27,8 +27,13 @@ from .validation import (
 def map_envelope(row: object) -> RawCase:
     if isinstance(row, RawCase):
         return row
+    if isinstance(row, tuple):
+        pair = cast(tuple[object, ...], row)
+        if len(pair) != 2:
+            raise ValueError("A tuple dataset row must contain exactly (input, expected)")
+        return RawCase(input=pair[0], expected=pair[1])
     if not isinstance(row, Mapping):
-        raise TypeError("A dataset row must be a mapping or RawCase")
+        raise TypeError("A dataset row must be a mapping, RawCase, or (input, expected) tuple")
     value = cast(Mapping[str, object], row)
     if "input" not in value:
         raise ValueError("Missing required field 'input'")

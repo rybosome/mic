@@ -56,11 +56,36 @@ when a mapper supplies a separate logical ID; see
 
 ## Python iterables
 
-A factory may return a fresh list, generator, or async iterator. Use `RawCase` to
-pass native dataclasses or Pydantic models. Iterators are consumed only once per
-read, and active generators are closed when reading ends early or fails. Reusable
-containers themselves are untouched. Return a fresh iterator each time instead of
-capturing a generator that a previous run already exhausted.
+A factory may return a fresh list, generator, or async iterator. For cases with
+only input and expected values, return two-element tuple rows:
+
+```python
+@mic.dataset(input=str, expected=bool)
+def cases() -> list[tuple[str, bool]]:
+    return [("PDF upload fails", True), ("Add invoice export", False)]
+```
+
+Each tuple is `(input, expected)`; both values undergo the same schema validation
+as `RawCase` and envelope mappings. Native dataclasses and Pydantic models work
+in any of these forms. Duplicate inputs remain separate cases with generated
+occurrence IDs. The factory returns an iterable of rows: wrap a single pair in a
+list, rather than returning the pair itself.
+
+Tuple rows may be mixed with `RawCase` and envelope mappings. Use those explicit
+forms for labels, metadata, or provenance. Other tuple lengths, bare lists, and
+strings are invalid rows under the default mapper. A list-valued input is fine
+inside a tuple: `([1, 2], "answer")`. Explicit `None` is a present null expected
+value; `mic.MISSING` denotes absence and requires `expected_policy="optional"`
+(and scorers that do not require an expected value). Tuples have no implicit
+one-element input-only form.
+
+A custom `map_row` receives the original row, including tuples, and must still
+return `RawCase`; default tuple conversion does not run before that callback.
+
+Iterators are consumed only once per read, and active generators are closed when
+reading ends early or fails. Reusable containers themselves are untouched. Return
+a fresh iterator each time instead of capturing a generator that a previous run
+already exhausted.
 
 Sync iteration and blocking SDK operations use worker threads. Python cannot
 forcibly terminate a thread; cancellation joins an in-flight source read before

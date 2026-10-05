@@ -202,9 +202,8 @@ def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, a
 def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
     module, constructor, _ = quickstart
     # Exercise the reader's schema, not only Pydantic construction in application code.
-    source = QUICKSTART.replace(
-        'expected=Classification(label="bug")', 'expected={"label": "unknown"}'
-    )
+    source = QUICKSTART.replace('Classification(label="bug")', '{"label": "unknown"}')
+    assert source != QUICKSTART
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "invalid-data"]) == 2
     constructor.assert_not_called()
@@ -298,7 +297,7 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
         for line in Path("metrics/events.jsonl").read_text().splitlines()
         if (e := json.loads(line))["type"] == "trial_finished"
     ]
-    bug = next(case for case in cases if case["label"] == "upload")
+    bug = next(case for case in cases if case["input"]["subject"] == "PDF upload")
     assert bug["scores"][0]["metadata"] == {
         "body_length": len("The app closes whenever I upload a PDF."),
     }
