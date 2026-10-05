@@ -1,7 +1,7 @@
 """README quickstart. Running this evaluation requires TypeSafe credentials and incurs API costs."""
 
 from dataclasses import dataclass
-from typing import Literal, cast, get_args, get_type_hints
+from typing import Literal, cast
 
 import mic
 
@@ -47,26 +47,26 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
-    labels = get_args(get_type_hints(Classification)["label"])
     # Create the client only when the task runs, and close it after the call.
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = client.system_one(
             model="jev-latest",
             state={
-                "instructions": (
-                    "Classify support tickets: bug means broken behavior, "
-                    "feature means a new capability, and question means how-to help."
-                ),
+                "instructions": "Classify the support ticket using the label descriptions.",
                 "message": {"subject": ticket.subject, "body": ticket.body},
             },
             questions={
                 "label": Choice(
                     instructions="Which classification label applies to this ticket?",
-                    criteria={label: None for label in labels},
+                    criteria={
+                        "bug": "Broken behavior or an error in an existing capability.",
+                        "feature": "A request for a new capability or enhancement.",
+                        "question": "A request for information or how-to help.",
+                    },
                 ),
             },
         )
         label = response.choices["label"].choice
-        if label not in labels:
+        if label not in ("bug", "feature", "question"):
             raise ValueError("The model did not return an allowed classification.")
         return Classification(label=cast(Label, label))

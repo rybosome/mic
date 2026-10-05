@@ -36,7 +36,7 @@ dataclasses for both; Mic validates their annotated fields.
 <!-- snippet: quickstart-dataset -->
 ```python
 from dataclasses import dataclass
-from typing import Literal, cast, get_args, get_type_hints
+from typing import Literal, cast
 
 import mic
 
@@ -88,8 +88,8 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 
 Call your application and return its result. The
 [TypeSafe Python SDK](https://docs.typesafe.ai/sdk/python) asks Jev a choice
-question. Instructions and the input message form the state; the choices come
-from the `Literal` annotation on `Classification.label`.
+question. Instructions and the input message form the state; each choice
+includes a label and a description of when it applies.
 
 <!-- snippet: quickstart-task -->
 ```python
@@ -97,27 +97,27 @@ from the `Literal` annotation on `Classification.label`.
 def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
-    labels = get_args(get_type_hints(Classification)["label"])
     # Create the client only when the task runs, and close it after the call.
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = client.system_one(
             model="jev-latest",
             state={
-                "instructions": (
-                    "Classify support tickets: bug means broken behavior, "
-                    "feature means a new capability, and question means how-to help."
-                ),
+                "instructions": "Classify the support ticket using the label descriptions.",
                 "message": {"subject": ticket.subject, "body": ticket.body},
             },
             questions={
                 "label": Choice(
                     instructions="Which classification label applies to this ticket?",
-                    criteria={label: None for label in labels},
+                    criteria={
+                        "bug": "Broken behavior or an error in an existing capability.",
+                        "feature": "A request for a new capability or enhancement.",
+                        "question": "A request for information or how-to help.",
+                    },
                 ),
             },
         )
         label = response.choices["label"].choice
-        if label not in labels:
+        if label not in ("bug", "feature", "question"):
             raise ValueError("The model did not return an allowed classification.")
         return Classification(label=cast(Label, label))
 ```
@@ -163,8 +163,8 @@ class Classification(BaseModel):
     label: Label
 ```
 
-The dataset, scorer, and Jev task work with either schema style, including the
-same annotation inspection for choice labels. Mic's core needs no Pydantic;
+The dataset, scorer, and Jev task work with either schema style.
+Mic's core needs no Pydantic;
 the TypeSafe SDK itself depends on Pydantic internally. See [structured schemas](docs/schemas.md).
 
 ### Local JSONL
@@ -417,27 +417,27 @@ The dataset, scorer, and CLI commands stay the same.
 async def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import AsyncTypeSafeClient, Choice, RetryPolicy
 
-    labels = get_args(get_type_hints(Classification)["label"])
     # Create the client only when the task runs, and close it after the call.
     async with AsyncTypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = await client.system_one(
             model="jev-latest",
             state={
-                "instructions": (
-                    "Classify support tickets: bug means broken behavior, "
-                    "feature means a new capability, and question means how-to help."
-                ),
+                "instructions": "Classify the support ticket using the label descriptions.",
                 "message": {"subject": ticket.subject, "body": ticket.body},
             },
             questions={
                 "label": Choice(
                     instructions="Which classification label applies to this ticket?",
-                    criteria={label: None for label in labels},
+                    criteria={
+                        "bug": "Broken behavior or an error in an existing capability.",
+                        "feature": "A request for a new capability or enhancement.",
+                        "question": "A request for information or how-to help.",
+                    },
                 ),
             },
         )
         label = response.choices["label"].choice
-        if label not in labels:
+        if label not in ("bug", "feature", "question"):
             raise ValueError("The model did not return an allowed classification.")
         return Classification(label=cast(Label, label))
 ```

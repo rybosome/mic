@@ -96,12 +96,14 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
     request = client.system_one.call_args.kwargs
     assert request["state"]["message"]["subject"]
     assert request["questions"]["label"].criteria == {
-        "bug": None,
-        "feature": None,
-        "question": None,
+        "bug": "Broken behavior or an error in an existing capability.",
+        "feature": "A request for a new capability or enhancement.",
+        "question": "A request for information or how-to help.",
     }
     assert request["model"] == "jev-latest"
-    assert "bug means broken behavior" in request["state"]["instructions"]
+    assert request["state"]["instructions"] == (
+        "Classify the support ticket using the label descriptions."
+    )
     assert opened.call_count == 2
     first = json.loads(Path(".mic/tickets/run.json").read_text())
     repeated = json.loads(Path(".mic/tickets-v2/run.json").read_text())
@@ -344,9 +346,9 @@ def test_async_task_and_context_examples(quickstart, with_context, missing_outpu
     constructor.assert_called_with(timeout=30, retry=SimpleNamespace(max_retries=0))
     request = client.system_one.call_args.kwargs
     assert request["questions"]["label"].criteria == {
-        "bug": None,
-        "feature": None,
-        "question": None,
+        "bug": "Broken behavior or an error in an existing capability.",
+        "feature": "A request for a new capability or enhancement.",
+        "question": "A request for information or how-to help.",
     }
     result = json.loads(Path("async/run.json").read_text())
     assert result["summary"]["trials"]["task_failed"] == (6 if missing_output else 0)
