@@ -1,19 +1,23 @@
-"""README quickstart. Running this evaluation requires OpenAI credentials and incurs API costs."""
+"""README quickstart. Running this evaluation requires TypeSafe credentials and incurs API costs."""
 
-from typing import Literal
-
-from pydantic import BaseModel
+from dataclasses import dataclass
+from typing import Literal, cast
 
 import mic
 
 
-class Ticket(BaseModel):
+@dataclass
+class Ticket:
     subject: str
     body: str
 
 
-class Classification(BaseModel):
-    label: Literal["bug", "feature", "question"]
+Label = Literal["bug", "feature", "question"]
+
+
+@dataclass
+class Classification:
+    label: Label
 
 
 @mic.dataset(input=Ticket, expected=Classification)
@@ -41,20 +45,27 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 
 @mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
-    from openai import OpenAI
+    from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
-    # Create the client only when the task runs, and close it after the call.
-    with OpenAI(timeout=30, max_retries=0) as client:
-        response = client.responses.parse(
-            model="gpt-4.1-mini",
-            instructions=(
-                "Classify the support ticket as "
-                "bug (broken behavior), feature (new capability), or question (how-to)."
-            ),
-            input=ticket.model_dump_json(),
-            text_format=Classification,
-            store=False,
+    with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
+        response = client.system_one(
+            model="jev-latest",
+            state={
+                "instructions": "Classify the support ticket using the label descriptions.",
+                "message": {"subject": ticket.subject, "body": ticket.body},
+            },
+            questions={
+                "label": Choice(
+                    instructions="Which classification label applies to this ticket?",
+                    criteria={
+                        "bug": "Broken behavior or an error in an existing capability.",
+                        "feature": "A request for a new capability or enhancement.",
+                        "question": "A request for information or how-to help.",
+                    },
+                ),
+            },
         )
-        if response.output_parsed is None:
-            raise ValueError("The model did not return a classification.")
-        return response.output_parsed
+        label = response.choices["label"].choice
+        if label not in ("bug", "feature", "question"):
+            raise ValueError("The model did not return an allowed classification.")
+        return Classification(label=cast(Label, label))

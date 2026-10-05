@@ -46,16 +46,20 @@ def test_readme_matches_executable_example_and_fixture() -> None:
 @pytest.fixture
 def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     # Never import a real SDK or use the host's credentials during this test.
-    sdk = ModuleType("openai")
+    sdk = ModuleType("typesafe_sdk")
     constructor = MagicMock()
-    sdk.OpenAI = constructor
-    monkeypatch.setitem(sys.modules, "openai", sdk)
+    sdk.TypeSafeClient = constructor
+    sdk.Choice = SimpleNamespace
+    sdk.RetryPolicy = SimpleNamespace
+    monkeypatch.setitem(sys.modules, "typesafe_sdk", sdk)
     client = constructor.return_value.__enter__.return_value
     labels = {row["input"]["body"]: row["expected"] for row in map(json.loads, JSONL.splitlines())}
-    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
-        output_parsed=kwargs["text_format"](**labels[json.loads(kwargs["input"])["body"]])
+    client.system_one.side_effect = lambda **kwargs: SimpleNamespace(
+        choices={
+            "label": SimpleNamespace(choice=labels[kwargs["state"]["message"]["body"]]["label"])
+        }
     )
     module = ModuleType("ticket_eval")
     module.__file__ = str(tmp_path / "ticket_eval.py")
@@ -84,17 +88,22 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
         else:
             assert main(shlex.split(command)[1:]) == 0, command
     assert (
-        client.responses.parse.call_count == 36
+        client.system_one.call_count == 36
     )  # 3 + 15 + 15 + 3; discovery/inspection/preflight/report/help make no model calls.
     assert constructor.call_count == 36
     assert constructor.return_value.__exit__.call_count == 36
-    constructor.assert_called_with(timeout=30, max_retries=0)
-    request = client.responses.parse.call_args.kwargs
-    assert request["text_format"] is module.Classification
-    assert module.Ticket.model_validate_json(request["input"]).subject
-    assert request["store"] is False
-    assert request["model"] == "gpt-4.1-mini"
-    assert "bug (broken behavior)" in request["instructions"]
+    constructor.assert_called_with(timeout=30, retry=SimpleNamespace(max_retries=0))
+    request = client.system_one.call_args.kwargs
+    assert request["state"]["message"]["subject"]
+    assert request["questions"]["label"].criteria == {
+        "bug": "Broken behavior or an error in an existing capability.",
+        "feature": "A request for a new capability or enhancement.",
+        "question": "A request for information or how-to help.",
+    }
+    assert request["model"] == "jev-latest"
+    assert request["state"]["instructions"] == (
+        "Classify the support ticket using the label descriptions."
+    )
     assert opened.call_count == 2
     first = json.loads(Path(".mic/tickets/run.json").read_text())
     repeated = json.loads(Path(".mic/tickets-v2/run.json").read_text())
@@ -143,8 +152,8 @@ def test_jsonl_replacement_preserves_dataset_and_scores(quickstart, tmp_path: Pa
 
 def test_wrong_labels_are_scores_not_execution_failures(quickstart) -> None:
     module, _, client = quickstart
-    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
-        output_parsed=module.Classification(label="feature")
+    client.system_one.side_effect = lambda **kwargs: SimpleNamespace(
+        choices={"label": SimpleNamespace(choice="feature")}
     )
     assert main(["run", "ticket_eval:classify", "--output", "ungated"]) == 0
     assert (
@@ -170,14 +179,14 @@ def test_wrong_labels_are_scores_not_execution_failures(quickstart) -> None:
 
 def test_model_failure_keeps_other_results_and_closes_clients(quickstart) -> None:
     _, constructor, client = quickstart
-    respond = client.responses.parse.side_effect
+    respond = client.system_one.side_effect
 
     def fail_one(**kwargs):
-        if "PDF" in json.loads(kwargs["input"])["body"]:
+        if "PDF" in kwargs["state"]["message"]["body"]:
             raise RuntimeError("Synthetic model failure")
         return respond(**kwargs)
 
-    client.responses.parse.side_effect = fail_one
+    client.system_one.side_effect = fail_one
     assert main(["run", "ticket_eval:classify", "--output", "failed"]) == 1
     result = json.loads(Path("failed/run.json").read_text())
     assert result["summary"]["trials"]["task_failed"] == 1
@@ -189,8 +198,8 @@ def test_model_failure_keeps_other_results_and_closes_clients(quickstart) -> Non
 @pytest.mark.parametrize("answer", [None, {"label": "unknown"}, {"label": 42}])
 def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, answer) -> None:
     module, constructor, client = quickstart
-    client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
-        output_parsed=None if answer is None else module.Classification.model_validate(answer)
+    client.system_one.side_effect = lambda **kwargs: SimpleNamespace(
+        choices={} if answer is None else {"label": SimpleNamespace(choice=answer["label"])}
     )
     assert main(["run", "ticket_eval:classify", "--output", "invalid"]) == 1
     result = json.loads(Path("invalid/run.json").read_text())
@@ -201,7 +210,7 @@ def test_missing_or_invalid_structured_output_is_execution_failure(quickstart, a
 
 def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
     module, constructor, _ = quickstart
-    # Exercise the reader's schema, not only Pydantic construction in application code.
+    # Exercise Mic's schema validation before the task runs.
     source = QUICKSTART.replace('Classification(label="bug")', '{"label": "unknown"}')
     assert source != QUICKSTART
     exec(compile(source, module.__file__, "exec"), module.__dict__)
@@ -209,13 +218,13 @@ def test_invalid_dataset_rejected_before_model_call(quickstart) -> None:
     constructor.assert_not_called()
 
 
-def test_dataclass_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
-    from dataclasses import is_dataclass
+def test_pydantic_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
+    from pydantic import BaseModel
 
     module, constructor, _ = quickstart
     source = (
         "import mic\n"
-        + snippet("dataclasses")
+        + snippet("pydantic-models")
         + "\n@mic.dataset"
         + snippet("quickstart-dataset").split("@mic.dataset", 1)[1]
     )
@@ -223,11 +232,15 @@ def test_dataclass_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
     record = json.loads(JSONL.splitlines()[0])
     ticket = module.tickets.schema.input.validate(record["input"])
     expected = module.tickets.schema.expected.validate(record["expected"])
-    assert is_dataclass(ticket) and is_dataclass(expected)
+    assert isinstance(ticket, BaseModel) and isinstance(expected, BaseModel)
     assert ticket.subject == record["input"]["subject"]
     assert expected.label == "bug"
     assert main(["inspect", "ticket_eval:tickets", "--limit", "3"]) == 0
     constructor.assert_not_called()
+    exec(snippet("quickstart-scoring") + "\n" + snippet("quickstart-task"), module.__dict__)
+    assert main(["run", "ticket_eval:classify", "--output", "pydantic"]) == 0
+    result = json.loads(Path("pydantic/run.json").read_text())
+    assert result["summary"]["tasks"]["classify"]["scores"]["accuracy"]["mean"] == 1
 
 
 @pytest.mark.parametrize("name", ["bigquery-dataset", "braintrust-dataset"])
@@ -260,14 +273,14 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     task = snippet("multiple-scorers") + task.split("\n", 1)[1]
     source = snippet("quickstart-dataset") + "\n\n" + snippet("extended-scoring") + "\n\n" + task
     exec(compile(source, module.__file__, "exec"), module.__dict__)
-    respond = client.responses.parse.side_effect
+    respond = client.system_one.side_effect
 
     def predict(**kwargs):
-        if miss_bug and json.loads(kwargs["input"])["subject"] == "PDF upload":
-            return SimpleNamespace(output_parsed=module.Classification(label="question"))
+        if miss_bug and kwargs["state"]["message"]["subject"] == "PDF upload":
+            return SimpleNamespace(choices={"label": SimpleNamespace(choice="question")})
         return respond(**kwargs)
 
-    client.responses.parse.side_effect = predict
+    client.system_one.side_effect = predict
     command = shlex.split(snippet("cli-gates").replace("\\\n", " "))[1:]
     if relaxed_accuracy:
         command[command.index('tasks["classify"].scores["accuracy"].mean>=0.9')] = (
@@ -308,13 +321,13 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
 def test_async_task_and_context_examples(quickstart, with_context, missing_output, caplog) -> None:
     module, _, sync_client = quickstart
     constructor = MagicMock()
-    sys.modules["openai"].AsyncOpenAI = constructor
+    sys.modules["typesafe_sdk"].AsyncTypeSafeClient = constructor
     client = constructor.return_value.__aenter__.return_value
-    client.responses.parse = AsyncMock(
+    client.system_one = AsyncMock(
         side_effect=(
-            (lambda **kwargs: SimpleNamespace(output_parsed=None))
+            (lambda **kwargs: SimpleNamespace(choices={}))
             if missing_output
-            else sync_client.responses.parse.side_effect
+            else sync_client.system_one.side_effect
         )
     )
     source = snippet("async-task")
@@ -328,12 +341,15 @@ def test_async_task_and_context_examples(quickstart, with_context, missing_outpu
     assert main(["run", "ticket_eval:classify", "--trials", "2", "--output", "async"]) == (
         1 if missing_output else 0
     )
-    assert client.responses.parse.await_count == 6
+    assert client.system_one.await_count == 6
     assert constructor.return_value.__aexit__.await_count == 6
-    constructor.assert_called_with(timeout=30, max_retries=0)
-    request = client.responses.parse.call_args.kwargs
-    assert request["text_format"] is module.Classification
-    assert request["store"] is False
+    constructor.assert_called_with(timeout=30, retry=SimpleNamespace(max_retries=0))
+    request = client.system_one.call_args.kwargs
+    assert request["questions"]["label"].criteria == {
+        "bug": "Broken behavior or an error in an existing capability.",
+        "feature": "A request for a new capability or enhancement.",
+        "question": "A request for information or how-to help.",
+    }
     result = json.loads(Path("async/run.json").read_text())
     assert result["summary"]["trials"]["task_failed"] == (6 if missing_output else 0)
     if with_context:
@@ -349,8 +365,8 @@ def test_async_task_and_context_examples(quickstart, with_context, missing_outpu
 def test_programmatic_invocation_examples(quickstart, async_runner, wrong_labels) -> None:
     module, _, client = quickstart
     if wrong_labels:
-        client.responses.parse.side_effect = lambda **kwargs: SimpleNamespace(
-            output_parsed=module.Classification(label="feature")
+        client.system_one.side_effect = lambda **kwargs: SimpleNamespace(
+            choices={"label": SimpleNamespace(choice="feature")}
         )
     namespace = {}
     if async_runner:
