@@ -21,33 +21,38 @@ and **the code to call**. This example classifies tickets as bugs, feature reque
 or questions.
 
 ```console
-uv add 'mic-evals[pydantic]' openai
+uv add mic-evals typesafe-sdk
 ```
 
-Set `OPENAI_API_KEY` in your environment. Running this example sends tickets to
-OpenAI and incurs API charges. Save the following **three Python blocks together**
+Set `TYPESAFE_API_KEY` in your environment. Running this example sends tickets to
+TypeSafe AI and incurs API charges. Save the following **three Python blocks together**
 as `ticket_eval.py` ([complete file](examples/ticket_eval.py)).
 
 ### 1. Define the dataset
 
-Each case pairs a structured input with an expected answer.
+Each case pairs a structured input with an expected answer. Use standard-library
+dataclasses for both; Mic validates their annotated fields.
 
 <!-- snippet: quickstart-dataset -->
 ```python
-from typing import Literal
-
-from pydantic import BaseModel
+from dataclasses import dataclass
+from typing import Literal, cast, get_args, get_type_hints
 
 import mic
 
 
-class Ticket(BaseModel):
+@dataclass
+class Ticket:
     subject: str
     body: str
 
 
-class Classification(BaseModel):
-    label: Literal["bug", "feature", "question"]
+Label = Literal["bug", "feature", "question"]
+
+
+@dataclass
+class Classification:
+    label: Label
 
 
 @mic.dataset(input=Ticket, expected=Classification)
@@ -81,32 +86,45 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 
 ### 3. Define the task
 
-Call your application and return its result. Here, the
-[OpenAI structured-output parser](https://developers.openai.com/api/docs/guides/structured-outputs)
-uses the same `Classification` model as Mic.
+Call your application and return its result. The
+[TypeSafe Python SDK](https://docs.typesafe.ai/sdk/python) asks Jev a choice
+question. Instructions and the input message form the state; the choices come
+from the `Literal` annotation on `Classification.label`.
 
 <!-- snippet: quickstart-task -->
 ```python
 @mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
-    from openai import OpenAI
+    from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
+    labels = get_args(get_type_hints(Classification)["label"])
     # Create the client only when the task runs, and close it after the call.
-    with OpenAI(timeout=30, max_retries=0) as client:
-        response = client.responses.parse(
-            model="gpt-4.1-mini",
-            instructions=(
-                "Classify the support ticket as "
-                "bug (broken behavior), feature (new capability), or question (how-to)."
-            ),
-            input=ticket.model_dump_json(),
-            text_format=Classification,
-            store=False,
+    with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
+        response = client.system_one(
+            model="jev-latest",
+            state={
+                "instructions": (
+                    "Classify support tickets: bug means broken behavior, "
+                    "feature means a new capability, and question means how-to help."
+                ),
+                "message": {"subject": ticket.subject, "body": ticket.body},
+            },
+            questions={
+                "label": Choice(
+                    instructions="Which classification label applies to this ticket?",
+                    criteria={label: None for label in labels},
+                ),
+            },
         )
-        if response.output_parsed is None:
-            raise ValueError("The model did not return a classification.")
-        return response.output_parsed
+        label = response.choices["label"].choice
+        if label not in labels:
+            raise ValueError("The model did not return an allowed classification.")
+        return Classification(label=cast(Label, label))
 ```
+
+The client disables automatic retries and uses a 30-second HTTP timeout.
+`jev-latest` follows TypeSafe's current model; use a specific supported version
+when you need a fixed model for comparisons.
 
 ### Run and inspect
 
@@ -120,29 +138,34 @@ JSON/JSONL evidence is saved alongside it.
 
 ## Datasets: keep the evaluation, change the source
 
-### Dataclasses or Pydantic
+### Optional Pydantic models
 
-Mic supports ordinary dataclasses without extra dependencies:
+If your application already uses Pydantic, install Mic's optional support:
 
-<!-- snippet: dataclasses -->
+```console
+uv add 'mic-evals[pydantic]'
+```
+
+Replace the quickstart's `Ticket` and `Classification` definitions with these
+models, keeping its `Label` alias and other imports:
+
+<!-- snippet: pydantic-models -->
 ```python
-from dataclasses import dataclass
-from typing import Literal
+from pydantic import BaseModel
 
 
-@dataclass
-class Ticket:
+class Ticket(BaseModel):
     subject: str
     body: str
 
 
-@dataclass
-class Classification:
-    label: Literal["bug", "feature", "question"]
+class Classification(BaseModel):
+    label: Label
 ```
 
-The quickstart uses optional Pydantic models to share an output schema with OpenAI.
-Both work with Mic's dataset and output schemas. See [structured schemas](docs/schemas.md).
+The dataset, scorer, and Jev task work with either schema style, including the
+same annotation inspection for choice labels. Mic's core needs no Pydantic;
+the TypeSafe SDK itself depends on Pydantic internally. See [structured schemas](docs/schemas.md).
 
 ### Local JSONL
 
@@ -384,30 +407,39 @@ Mic accepts async tasks and scorers; they can be mixed in the same evaluation.
 
 ### Use an async client
 
-Replace the quickstart's task with this async equivalent. OpenAI supports
-[`AsyncOpenAI` with awaited structured-output parsing](https://developers.openai.com/cookbook/examples/partners/eval_driven_system_design/receipt_inspection).
+Replace the quickstart's task with this async equivalent using TypeSafe's
+[`AsyncTypeSafeClient`](https://docs.typesafe.ai/sdk/python).
 The dataset, scorer, and CLI commands stay the same.
 
 <!-- snippet: async-task -->
 ```python
 @mic.eval(dataset=tickets, scorers=[accuracy])
 async def classify(ticket: Ticket) -> Classification:
-    from openai import AsyncOpenAI
+    from typesafe_sdk import AsyncTypeSafeClient, Choice, RetryPolicy
 
-    async with AsyncOpenAI(timeout=30, max_retries=0) as client:
-        response = await client.responses.parse(
-            model="gpt-4.1-mini",
-            instructions=(
-                "Classify the support ticket as "
-                "bug (broken behavior), feature (new capability), or question (how-to)."
-            ),
-            input=ticket.model_dump_json(),
-            text_format=Classification,
-            store=False,
+    labels = get_args(get_type_hints(Classification)["label"])
+    # Create the client only when the task runs, and close it after the call.
+    async with AsyncTypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
+        response = await client.system_one(
+            model="jev-latest",
+            state={
+                "instructions": (
+                    "Classify support tickets: bug means broken behavior, "
+                    "feature means a new capability, and question means how-to help."
+                ),
+                "message": {"subject": ticket.subject, "body": ticket.body},
+            },
+            questions={
+                "label": Choice(
+                    instructions="Which classification label applies to this ticket?",
+                    criteria={label: None for label in labels},
+                ),
+            },
         )
-        if response.output_parsed is None:
-            raise ValueError("The model did not return a classification.")
-        return response.output_parsed
+        label = response.choices["label"].choice
+        if label not in labels:
+            raise ValueError("The model did not return an allowed classification.")
+        return Classification(label=cast(Label, label))
 ```
 
 ### Request context when you need it
