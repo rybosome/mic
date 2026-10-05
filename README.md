@@ -68,10 +68,6 @@ def tickets() -> list[tuple[Ticket, Classification]]:
     ]
 ```
 
-Each tuple is `(input, expected)`. Mic generates case IDs automatically. Use
-`mic.RawCase(input=..., expected=..., id=..., metadata=...)` when a case needs
-a label or metadata.
-
 ### 2. Define the scoring
 
 Give a correct label `1`, an incorrect label `0`.
@@ -173,10 +169,7 @@ def tickets() -> JSONLFileHandle:
     return JSONLFileHandle(Path(__file__).with_name("tickets.jsonl"))
 ```
 
-Mic hydrates the JSON objects into your declared types and validates cases before
-running the task. The scorer, task, and run commands do not change.
-For JSON arrays, use `JSONFileHandle(path)`. For an export such as
-`{"items": [...]}`, use `JSONFileHandle(path, records_key="items")`. See
+See
 [local file contracts and custom row mapping](docs/providers.md#local-files).
 
 ### BigQuery
