@@ -86,10 +86,7 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 
 ### 3. Define the task
 
-Call your application and return its result. The
-[TypeSafe Python SDK](https://docs.typesafe.ai/sdk/python) asks Jev a choice
-question. Instructions and the input message form the state; each choice
-includes a label and a description of when it applies.
+Call your application and return its result.
 
 <!-- snippet: quickstart-task -->
 ```python
@@ -97,7 +94,6 @@ includes a label and a description of when it applies.
 def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
-    # Create the client only when the task runs, and close it after the call.
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = client.system_one(
             model="jev-latest",
@@ -121,10 +117,6 @@ def classify(ticket: Ticket) -> Classification:
             raise ValueError("The model did not return an allowed classification.")
         return Classification(label=cast(Label, label))
 ```
-
-The client disables automatic retries and uses a 30-second HTTP timeout.
-`jev-latest` follows TypeSafe's current model; use a specific supported version
-when you need a fixed model for comparisons.
 
 ### Run and inspect
 
@@ -163,9 +155,7 @@ class Classification(BaseModel):
     label: Label
 ```
 
-The dataset, scorer, and Jev task work with either schema style.
-Mic's core needs no Pydantic;
-the TypeSafe SDK itself depends on Pydantic internally. See [structured schemas](docs/schemas.md).
+See [structured schemas](docs/schemas.md).
 
 ### Local JSONL
 
@@ -417,7 +407,6 @@ The dataset, scorer, and CLI commands stay the same.
 async def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import AsyncTypeSafeClient, Choice, RetryPolicy
 
-    # Create the client only when the task runs, and close it after the call.
     async with AsyncTypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = await client.system_one(
             model="jev-latest",

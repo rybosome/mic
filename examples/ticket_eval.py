@@ -47,7 +47,6 @@ def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
 def classify(ticket: Ticket) -> Classification:
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
-    # Create the client only when the task runs, and close it after the call.
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
         response = client.system_one(
             model="jev-latest",
