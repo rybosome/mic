@@ -88,10 +88,10 @@ def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch)
         else:
             assert main(shlex.split(command)[1:]) == 0, command
     assert (
-        client.system_one.call_count == 36
-    )  # 3 + 15 + 15 + 3; discovery/inspection/preflight/report/help make no model calls.
-    assert constructor.call_count == 36
-    assert constructor.return_value.__exit__.call_count == 36
+        client.system_one.call_count == 39
+    )  # 3 + 3 + 15 + 15 + 3; discovery/inspection/preflight/report/help make no model calls.
+    assert constructor.call_count == 39
+    assert constructor.return_value.__exit__.call_count == 39
     constructor.assert_called_with(timeout=30, retry=SimpleNamespace(max_retries=0))
     request = client.system_one.call_args.kwargs
     assert request["state"]["message"]["subject"]
