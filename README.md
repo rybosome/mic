@@ -10,6 +10,8 @@ and streams results with optional local evidence.
 
 Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
+### uv
+
 Add Mic to your project with [uv](https://docs.astral.sh/uv/):
 
 ```console
@@ -17,42 +19,40 @@ uv add mic-evals
 source .venv/bin/activate
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead.
-The commands below use the activated environment; without activation, use
-`uv run mic` in place of `mic`. Prefer pip? Run `python -m pip install mic-evals`
-in your activated project environment.
+The commands below use the activated environment. To activate:
+ - Mac/Linux: `source .venv/bin/activate`
+ - Windows PowerShell: `.venv\Scripts\Activate.ps1`
 
-<details>
-<summary>Trying Mic in an empty directory?</summary>
+Without activation, use `uv run mic` in place of `mic`.
 
-Initialize a project before installing:
+### pip
 
-```console
-uv init --bare --python 3.12
-```
+Run `python -m pip install mic-evals` in your activated project environment.
 
-</details>
+## Overview
+
+The purpose of Mic is to offer minimal, code-first declarations of evaluation for
+non-deterministic systems.
+
+Defining an evaluation consists of 3 things:
+
+ 1) **which cases to test**
+ 2) **how to determine answer quality**
+ 3) **how to call the code under evaluation**
+
+Mic evals are files which combine all 3, forming an execution contract for the accompanying CLI.
 
 ## Quickstart: evaluate a support-ticket classifier
 
-An evaluation has three parts: **cases to test**, **what counts as a good answer**,
-and **the code to call**. This example classifies tickets as bugs, feature requests,
-or questions.
+This example classifies tickets as bugs, feature requests, or questions.
 
 ```console
 uv add mic-evals typesafe-sdk
 ```
 
 Set `TYPESAFE_API_KEY` in your environment. Running this example sends tickets to
-TypeSafe AI and incurs API charges. Save the following **three Python blocks together**
-as `ticket_eval.py` ([complete file](examples/ticket_eval.py)).
+TypeSafe AI and incurs API charges. Save the following as ([ticket_eval.py](examples/ticket_eval.py)).
 
-### 1. Define the dataset
-
-Each case pairs a structured input with an expected answer. Use standard-library
-dataclasses for both; Mic validates their annotated fields.
-
-<!-- snippet: quickstart-dataset -->
 ```python
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -76,6 +76,7 @@ class Classification:
 
 @mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> list[tuple[Ticket, Classification]]:
+    """Return a static list of support tickets and expected classifications."""
     return [
         (
             Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
@@ -90,27 +91,17 @@ def tickets() -> list[tuple[Ticket, Classification]]:
             Classification(label="question"),
         ),
     ]
-```
 
-### 2. Define the scoring
 
-Give a correct label `1`, an incorrect label `0`.
-
-<!-- snippet: quickstart-scoring -->
-```python
 @mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
+    """Binary scorer grading actual label matching expected label."""
     return float(ctx.output.label == ctx.require_expected().label)
-```
 
-### 3. Define the task
 
-Call your application and return its result.
-
-<!-- snippet: quickstart-task -->
-```python
 @mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
+    """Call Jev and classify the given ticket."""
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
