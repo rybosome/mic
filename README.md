@@ -51,7 +51,7 @@ pipeline, optionally preparing local reports and evidence as requested.
 
 `mic` is explicitly designed for ease of agent authorship and execution.
 
-Give your agent [the `mic` skill](skills/mic/SKILL.md) for installation, evaluation
+Give your agent [the mic skill](skills/mic/SKILL.md) for installation, evaluation
 design, CLI controls, and result interpretation.
 
 ## Install
@@ -78,16 +78,13 @@ Run `python -m pip install mic-evals` in your activated project environment.
 
 ## Quickstart: evaluate a support-ticket classifier
 
-This example classifies tickets as bugs, feature requests, or questions.
+This example uses Jev to classify tickets as bugs, feature requests, or questions.
 
 ```console
 uv add mic-evals typesafe-sdk
 ```
 
-Set `TYPESAFE_API_KEY` in your environment. Running this example sends tickets to
-TypeSafe AI and incurs API charges.
-
-Save the following as ([ticket_eval.py](examples/ticket_eval.py)).
+Set `TYPESAFE_API_KEY` in your environment, and save the following as [ticket_eval.py](examples/ticket_eval.py).
 
 ```python
 from dataclasses import dataclass
