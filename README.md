@@ -629,12 +629,6 @@ result.summary.tasks["classify"].scores
 Either runner supports sync and async tasks.
 See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
 
-## Agent skill
-
-Give your agent [the `mic` skill](skills/mic/SKILL.md) for installation, evaluation
-design, CLI controls, and interpreting results. Keep the `skills/mic/` folder
-and its references together when copying it into your agent's skill directory.
-
 ## Notes and documentation
 
 - **Early release:** the API may change before a stable release.
