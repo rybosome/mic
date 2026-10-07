@@ -2,57 +2,90 @@
 
 [![CI](https://github.com/rybosome/mic/actions/workflows/ci.yml/badge.svg)](https://github.com/rybosome/mic/actions/workflows/ci.yml)
 
+`mic` - short for "micro-evals".
+
 Typed evaluations for LLMs, agents, and other nondeterministic systems. Define
-your cases, scoring functions, and application call; Mic runs repeated trials
+your cases, scoring functions, and application call; `mic` runs repeated trials
 and streams results with optional local evidence.
+
+## Overview
+
+The purpose of `mic` is to make it simple to author and run minimal, code-first declarations of
+evaluation for non-deterministic systems.
+
+Defining an evaluation consists of 3 things:
+
+ 1) **which cases to test**
+ 2) **how to determine answer quality**
+ 3) **how to call the code under evaluation**
+
+`mic` evals are files which combine all 3, forming an execution contract for the accompanying CLI.
+
+A typical `mic` file has the following structure:
+
+```python
+# my_eval.py
+
+import mic
+
+@mic.dataset(input=..., expected=...)
+def my_dataset():
+    """Define the cases we are testing."""
+    pass
+
+@mic.scorer()
+def my_scorer(...):
+    """Determine how a single input+expected+output row of our dataset performed."""
+    pass
+
+@mic.eval(dataset=my_dataset, scorers=[my_scorer])
+def my_task(...):
+    """Execute the task against the given dataset and scorer, row-by-row."""
+    pass
+```
+
+The `mic` CLI command `mic run my_eval:my_task` will stream the dataset through the task/scoring
+pipeline, optionally preparing local reports and evidence as requested.
+
+### Agent skill
+
+`mic` is explicitly designed for ease of agent authorship and execution.
+
+Give your agent [the mic skill](skills/mic/SKILL.md) for installation, evaluation
+design, CLI controls, and result interpretation.
 
 ## Install
 
 Requires **Python 3.12+**. The core has no third-party runtime dependencies.
 
-Add Mic to your project with [uv](https://docs.astral.sh/uv/):
+### uv
+
+Add `mic` to your project with [uv](https://docs.astral.sh/uv/):
 
 ```console
 uv add mic-evals
-source .venv/bin/activate
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead.
-The commands below use the activated environment; without activation, use
-`uv run mic` in place of `mic`. Prefer pip? Run `python -m pip install mic-evals`
-in your activated project environment.
+The commands below use the activated environment. To activate:
+ - Mac/Linux: `source .venv/bin/activate`
+ - Windows PowerShell: `.venv\Scripts\Activate.ps1`
 
-<details>
-<summary>Trying Mic in an empty directory?</summary>
+Without activation, use `uv run mic` in place of `mic`.
 
-Initialize a project before installing:
+### pip
 
-```console
-uv init --bare --python 3.12
-```
-
-</details>
+Run `python -m pip install mic-evals` in your activated project environment.
 
 ## Quickstart: evaluate a support-ticket classifier
 
-An evaluation has three parts: **cases to test**, **what counts as a good answer**,
-and **the code to call**. This example classifies tickets as bugs, feature requests,
-or questions.
+This example uses Jev to classify tickets as bugs, feature requests, or questions.
 
 ```console
 uv add mic-evals typesafe-sdk
 ```
 
-Set `TYPESAFE_API_KEY` in your environment. Running this example sends tickets to
-TypeSafe AI and incurs API charges. Save the following **three Python blocks together**
-as `ticket_eval.py` ([complete file](examples/ticket_eval.py)).
+Set `TYPESAFE_API_KEY` in your environment, and save the following as [ticket_eval.py](examples/ticket_eval.py).
 
-### 1. Define the dataset
-
-Each case pairs a structured input with an expected answer. Use standard-library
-dataclasses for both; Mic validates their annotated fields.
-
-<!-- snippet: quickstart-dataset -->
 ```python
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -76,6 +109,7 @@ class Classification:
 
 @mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> list[tuple[Ticket, Classification]]:
+    """Return a static list of support tickets and expected classifications."""
     return [
         (
             Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
@@ -90,27 +124,17 @@ def tickets() -> list[tuple[Ticket, Classification]]:
             Classification(label="question"),
         ),
     ]
-```
 
-### 2. Define the scoring
 
-Give a correct label `1`, an incorrect label `0`.
-
-<!-- snippet: quickstart-scoring -->
-```python
 @mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
+    """Binary scorer grading actual label matching expected label."""
     return float(ctx.output.label == ctx.require_expected().label)
-```
 
-### 3. Define the task
 
-Call your application and return its result.
-
-<!-- snippet: quickstart-task -->
-```python
 @mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
+    """Call Jev and classify the given ticket."""
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
@@ -168,13 +192,13 @@ mic report .mic/tickets --open
 └── report.html   # Generated by mic report
 ```
 
-Without `--output`, Mic saves no files; choose an empty or new directory for each recorded run.
+Without `--output`, `mic` saves no files; choose an empty or new directory for each recorded run.
 
 ## Datasets: keep the evaluation, change the source
 
 ### Optional Pydantic models
 
-If your application already uses Pydantic, install Mic's optional support:
+If your application already uses Pydantic, install `mic`'s optional support:
 
 ```console
 uv add 'mic-evals[pydantic]'
@@ -435,7 +459,7 @@ See [scoring contracts](docs/api.md).
 
 ## Tasks: sync, async, and execution context
 
-Mic accepts async tasks and scorers; they can be mixed in the same evaluation.
+`mic` accepts async tasks and scorers; they can be mixed in the same evaluation.
 
 ### Use an async client
 
@@ -506,7 +530,7 @@ mic inspect ticket_eval:tickets --limit 3
 mic preflight ticket_eval:classify
 ```
 
-At the inspection limit, `exhausted: false` means Mic stopped without checking for
+At the inspection limit, `exhausted: false` means `mic` stopped without checking for
 another record, not that more records necessarily exist.
 Inspection and preflight read datasets, including remote sources.
 
@@ -601,12 +625,6 @@ result.summary.tasks["classify"].scores
 
 Either runner supports sync and async tasks.
 See the [Python execution API](docs/api.md#multiple-evaluations) for suite semantics.
-
-## Agent skill
-
-Give your agent [the Mic skill](skills/mic/SKILL.md) for installation, evaluation
-design, CLI controls, and interpreting results. Keep the `skills/mic/` folder
-and its references together when copying it into your agent's skill directory.
 
 ## Notes and documentation
 
