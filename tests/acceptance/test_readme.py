@@ -28,16 +28,39 @@ def snippet(name: str) -> str:
     return match.group(1)
 
 
-QUICKSTART = "\n\n".join(
-    snippet(name) for name in ("quickstart-dataset", "quickstart-scoring", "quickstart-task")
-)
+def quickstart_source() -> str:
+    section = re.search(
+        r"^## Quickstart:[^\n]*\n(.*?)(?=^## |\Z)", README, re.MULTILINE | re.DOTALL
+    )
+    assert section is not None, "Missing README Quickstart section"
+    blocks = re.findall(r"^```python\n(.*?)^```", section.group(1), re.MULTILINE | re.DOTALL)
+    assert len(blocks) == 1, "Expected one complete Python example in the Quickstart section"
+    return blocks[0]
+
+
+QUICKSTART = quickstart_source()
+
+
+def quickstart_function(name: str) -> str:
+    """Extract a complete decorated function for the documented replacement examples."""
+    functions = [
+        node
+        for node in ast.parse(QUICKSTART).body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    assert len(functions) == 1, f"Expected one quickstart function: {name}"
+    function = functions[0]
+    start = min([function.lineno, *(node.lineno for node in function.decorator_list)])
+    return "".join(QUICKSTART.splitlines(keepends=True)[start - 1 : function.end_lineno])
+
+
 JSONL = snippet("tickets-jsonl")
 
 
 def test_readme_matches_executable_example_and_fixture() -> None:
     example = (ROOT / "examples/ticket_eval.py").read_text(encoding="utf-8")
     assert example.split("\n\n", 1)[1] == QUICKSTART, (
-        "README.md's assembled quickstart and examples/ticket_eval.py have drifted. "
+        "README.md's quickstart and examples/ticket_eval.py have drifted. "
         "Update both together, keeping the example file's module docstring."
     )
     assert (ROOT / "examples/fixtures/tickets.jsonl").read_text(encoding="utf-8") == JSONL
@@ -70,7 +93,7 @@ def quickstart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def test_readme_commands_and_report(quickstart, monkeypatch: pytest.MonkeyPatch) -> None:
     module, constructor, client = quickstart
-    task = snippet("multiple-scorers") + snippet("quickstart-task").split("\n", 1)[1]
+    task = snippet("multiple-scorers") + quickstart_function("classify").split("\n", 1)[1]
     exec(snippet("extended-scoring") + "\n\n" + task, module.__dict__)
     opened = MagicMock(return_value=True)
     monkeypatch.setattr("webbrowser.open", opened)
@@ -222,12 +245,7 @@ def test_pydantic_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
     from pydantic import BaseModel
 
     module, constructor, _ = quickstart
-    source = (
-        "import mic\n"
-        + snippet("pydantic-models")
-        + "\n@mic.dataset"
-        + snippet("quickstart-dataset").split("@mic.dataset", 1)[1]
-    )
+    source = "import mic\n" + snippet("pydantic-models") + "\n" + quickstart_function("tickets")
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     record = json.loads(JSONL.splitlines()[0])
     ticket = module.tickets.schema.input.validate(record["input"])
@@ -237,7 +255,7 @@ def test_pydantic_schemas_hydrate_the_same_ticket_records(quickstart) -> None:
     assert expected.label == "bug"
     assert main(["inspect", "ticket_eval:tickets", "--limit", "3"]) == 0
     constructor.assert_not_called()
-    exec(snippet("quickstart-scoring") + "\n" + snippet("quickstart-task"), module.__dict__)
+    exec(quickstart_function("accuracy") + "\n" + quickstart_function("classify"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "pydantic"]) == 0
     result = json.loads(Path("pydantic/run.json").read_text())
     assert result["summary"]["tasks"]["classify"]["scores"]["accuracy"]["mean"] == 1
@@ -269,9 +287,9 @@ def test_multiple_metrics_metadata_and_nonapplicable_scores(
     quickstart, miss_bug: bool, relaxed_accuracy: bool, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module, _, client = quickstart
-    task = snippet("quickstart-task")
+    task = quickstart_function("classify")
     task = snippet("multiple-scorers") + task.split("\n", 1)[1]
-    source = snippet("quickstart-dataset") + "\n\n" + snippet("extended-scoring") + "\n\n" + task
+    source = snippet("extended-scoring") + "\n\n" + task
     exec(compile(source, module.__file__, "exec"), module.__dict__)
     respond = client.system_one.side_effect
 
@@ -396,7 +414,7 @@ def test_yaml_source_example_uses_public_streaming_api(quickstart, tmp_path):
     assert list(yaml.safe_load_all(content)) == [json.loads(line) for line in JSONL.splitlines()]
     (tmp_path / "tickets.yaml").write_text(content, encoding="utf-8")
     exec(snippet("yaml-dataset"), module.__dict__)
-    exec(snippet("quickstart-task"), module.__dict__)
+    exec(quickstart_function("classify"), module.__dict__)
     assert main(["run", "ticket_eval:classify", "--output", "yaml"]) == 0
     saved = json.loads(Path("yaml/run.json").read_text(encoding="utf-8"))
     assert saved["summary"]["trials"]["completed"] == 3

@@ -22,6 +22,7 @@ class Classification:
 
 @mic.dataset(input=Ticket, expected=Classification)
 def tickets() -> list[tuple[Ticket, Classification]]:
+    """Return a static list of support tickets and expected classifications."""
     return [
         (
             Ticket(subject="PDF upload", body="The app closes whenever I upload a PDF."),
@@ -40,11 +41,13 @@ def tickets() -> list[tuple[Ticket, Classification]]:
 
 @mic.scorer()
 def accuracy(ctx: mic.ScoreContext[Ticket, Classification]) -> float:
+    """Binary scorer grading actual label matching expected label."""
     return float(ctx.output.label == ctx.require_expected().label)
 
 
 @mic.eval(dataset=tickets, scorers=[accuracy])
 def classify(ticket: Ticket) -> Classification:
+    """Call Jev and classify the given ticket."""
     from typesafe_sdk import Choice, RetryPolicy, TypeSafeClient
 
     with TypeSafeClient(timeout=30, retry=RetryPolicy(max_retries=0)) as client:
