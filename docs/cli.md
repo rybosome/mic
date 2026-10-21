@@ -147,11 +147,12 @@ recorder is first, explicit sinks next, then declared sinks. In a `module:*`
 suite each declared sink receives only the evaluations that declared it.
 
 ```console
-mic run ticket_eval:classify --no-declared-sinks
+mic run ticket_eval:classify --no-sinks
 ```
 
-`--no-declared-sinks` ignores every declared sink for that run, for example to
-run offline without publishing; explicit options still apply. See
+`--no-sinks` ignores every declared sink for that run, for example to
+run offline without publishing. It does not disable explicitly requested sinks:
+`--output` and `--braintrust-project` still apply, and Mic has no default sinks. See
 [declared sinks](reporting.md#declared-sinks).
 
 ## Exit codes and help

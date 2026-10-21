@@ -59,9 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--braintrust-org")
     run.add_argument("--output", type=Path)
     run.add_argument(
-        "--no-declared-sinks",
+        "--no-sinks",
         action="store_true",
-        help="Ignore sinks declared with @mic.eval(sinks=...); explicit options still apply",
+        help="Ignore sinks declared with @mic.eval(sinks=...); --output and --braintrust-* still apply",
     )
     run.add_argument("--timeout", type=float, help="Cooperative per-trial timeout in seconds")
     run.add_argument("--require", action="append", default=[], metavar="SUMMARY_PATH >= VALUE")
@@ -148,7 +148,7 @@ def _execute(args: argparse.Namespace) -> int:
         _print_json(result)
         return 0
     selection = resolve_evaluations(args.selector)
-    if args.no_declared_sinks:
+    if args.no_sinks:
         selection = [replace(spec, sinks=()) for spec in selection]
     run_result = mic.run(
         selection,

@@ -211,7 +211,7 @@ def test_cli_lists_and_can_ignore_declared_sinks(monkeypatch, capsys):
     assert "sinks=declared" in capsys.readouterr().out
     assert sink.opened == 0
 
-    assert main(["run", f"{module.__name__}:*", "--no-declared-sinks", "--json"]) == 0
+    assert main(["run", f"{module.__name__}:*", "--no-sinks", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["sinks"] == []
     assert sink.opened == 0
 

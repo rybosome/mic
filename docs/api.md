@@ -316,7 +316,7 @@ and a `finish` outcome whose summary, sources, and task requirements cover only
 those evaluations. The outcome's status, exit code, and failures remain
 run-wide. Declared sinks have the same failure semantics as explicit sinks. To run
 without them, pass `replace(evaluation, sinks=())` or use
-`mic run --no-declared-sinks`.
+`mic run --no-sinks`.
 
 See [sink lifecycle and Braintrust](reporting.md), [artifact schemas](artifacts.md),
 and [source authoring](providers.md#custom-sources).

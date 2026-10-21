@@ -152,7 +152,7 @@ export succeeded.
 
 Evaluations can also declare sinks with `@mic.eval(sinks=...)`; `mic run` then
 writes to them without any flag. `mic list` shows declared sink names without
-opening them. `run --no-declared-sinks` ignores them for that run while keeping
+opening them. `run --no-sinks` ignores them for that run while keeping
 explicit options. In a suite, each declared sink receives only the evaluations
 that declared it. Read the [reporting contracts](https://github.com/rybosome/mic/blob/main/docs/reporting.md)
 before using this integration.

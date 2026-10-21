@@ -102,7 +102,7 @@ evaluations that declared it:
 Failure semantics match explicit sinks: a write that raises disables the sink and
 stops admission for the whole run; a finish or close failure fails the run. A sink
 that must never affect a run should catch its own errors. Use
-`mic run --no-declared-sinks` (or `replace(evaluation, sinks=())` in Python) to run
+`mic run --no-sinks` (or `replace(evaluation, sinks=())` in Python) to run
 without declared sinks, for example offline without publishing.
 
 ## Persistence failures and cancellation
