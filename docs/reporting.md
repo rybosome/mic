@@ -49,7 +49,8 @@ class ProgressSession:
         return SinkReceipt("progress", "completed")
 ```
 
-Pass `sinks=[Progress()]` to `run`/`arun`. Construction must be passive; acquire
+Pass `sinks=[Progress()]` to `run`/`arun`, or declare the sink on the
+evaluation itself (below). Construction must be passive; acquire
 resources in `open` and release them in the context manager. Writes are awaited
 serially and apply backpressure. Do not spawn unbounded background work or keep an
 unbounded event list. For blocking operations, a sink owns and joins its worker.
@@ -60,6 +61,49 @@ Each sink receives independent copied data; source/score summaries are bounded.
 future finalization result; the returned RunResult adds those receipts afterward.
 Receipt details must be a finite JSON object. The entire normalized receipt,
 including any supplied failure, is capped at 64 KiB of UTF-8 JSON.
+
+## Declared sinks
+
+An evaluation can declare where its results go, so `mic run` uses those sinks
+with no extra flags:
+
+```python
+PROGRESS = Progress()
+
+
+@mic.eval(dataset=tickets, scorers=[accuracy], sinks=[PROGRESS])
+def classify(ticket: Ticket) -> Label: ...
+```
+
+A declared sink is built when its module is imported, including by `mic list`,
+so it must not acquire resources before `open`. `mic list` shows declared sink
+names and `mic preflight` validates them; neither opens a sink.
+
+Delivery order is the local recorder, then explicit sinks (`sinks=` or CLI
+flags), then declared sinks in evaluation order. A sink instance declared by
+several evaluations in a suite is opened once; duplicates are dropped by object
+identity. Two different instances with the same name fail as a configuration
+error before any source is read. An instance also passed explicitly is treated
+as explicit.
+
+Explicit sinks receive every event in the run. A declared sink receives only the
+evaluations that declared it:
+
+- `open` receives a `RunInfo` whose `tasks` lists only those evaluations.
+- `TrialFinished` events arrive only for those evaluations.
+- `CaseAccepted`, `RecordRejected`, and `SourceFinished` arrive only for sources
+  those evaluations read. A dataset shared with another evaluation is still
+  delivered, because its cases are inputs to the declaring evaluation.
+- `finish` receives an outcome whose summary, sources, and requirement results
+  cover only those evaluations; run-wide requirements such as
+  `trials.task_failed == 0` are omitted. Status, exit code, and failures describe
+  the whole run, so a declared sink can observe a run that failed elsewhere.
+
+Failure semantics match explicit sinks: a write that raises disables the sink and
+stops admission for the whole run; a finish or close failure fails the run. A sink
+that must never affect a run should catch its own errors. Use
+`mic run --no-sinks` (or `replace(evaluation, sinks=())` in Python) to run
+without declared sinks, for example offline without publishing.
 
 ## Persistence failures and cancellation
 

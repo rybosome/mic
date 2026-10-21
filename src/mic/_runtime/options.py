@@ -1,6 +1,7 @@
 """Resolve invocation options and validate definitions before task execution."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..errors import ConfigurationError
@@ -24,6 +25,17 @@ class Options:
         }
 
 
+def validate_sinks(sinks: Sequence[object]) -> None:
+    """Check declared sinks without opening them; repeated instances are allowed."""
+    names: dict[str, int] = {}
+    for sink in sinks:
+        if not callable(getattr(sink, "open", None)):
+            raise ConfigurationError("sink must provide a callable open()")
+        name = nonempty("sink name", getattr(sink, "name", None))
+        if names.setdefault(name, id(sink)) != id(sink):
+            raise ConfigurationError(f"Duplicate sink name {name!r}")
+
+
 def resolve_options[I, O, E, M](
     spec: Evaluation[I, O, E, M],
     *,
@@ -44,6 +56,7 @@ def resolve_options[I, O, E, M](
         if scorer_name in scorer_names:
             raise ConfigurationError(f"Duplicate scorer name {scorer_name!r}")
         scorer_names.add(scorer_name)
+    validate_sinks(spec.sinks)
     if timeout is not None and (
         isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0
     ):

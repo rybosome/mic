@@ -14,8 +14,9 @@ mic inspect ticket_eval:tickets --limit 3
 mic preflight ticket_eval:classify
 ```
 
-- `list` takes one or more module names, prints kind/name/selector, and optionally
-  emits JSON. It imports modules but does not call factories or tasks.
+- `list` takes one or more module names, prints kind/name/selector plus any declared
+  sink names, and optionally emits JSON. It imports modules but does not call
+  factories or tasks, or open sinks.
 - `module:symbol` selects an exact public Python symbol, not the name passed to
   its decorator. Run from a directory where the module is importable.
 - `inspect` accepts a dataset or evaluation; it prints validated rows and a
@@ -147,7 +148,13 @@ Braintrust extra, configured credentials, and authorized destination.
 `--braintrust-org ORG` require `--braintrust-project`.
 Local evidence remains a separate opt-in (`--output`); enabling export does not
 save a local copy. Check sink receipts, including cleanup failures, before claiming
-export succeeded. Read the [reporting contracts](https://github.com/rybosome/mic/blob/main/docs/reporting.md)
+export succeeded.
+
+Evaluations can also declare sinks with `@mic.eval(sinks=...)`; `mic run` then
+writes to them without any flag. `mic list` shows declared sink names without
+opening them. `run --no-sinks` ignores them for that run while keeping
+explicit options. In a suite, each declared sink receives only the evaluations
+that declared it. Read the [reporting contracts](https://github.com/rybosome/mic/blob/main/docs/reporting.md)
 before using this integration.
 
 ## From observation to next action

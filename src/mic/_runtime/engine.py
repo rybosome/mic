@@ -18,7 +18,7 @@ from .callbacks import CallbackPool
 from .case import cancelled_case, observation, run_case
 from .contracts import Case
 from .datasets import DatasetReader
-from .delivery import Delivery
+from .delivery import Delivery, Scope, Selected
 from .files import atomic_write
 from .options import resolve_options
 from .planning import BoundTask, RunSelection, configuration, plan
@@ -126,10 +126,18 @@ async def arun(
         raise ConfigurationError("on_invalid must be 'abort' or 'skip'")
     destination = Path(output).expanduser().resolve() if output is not None else None
     recorder = JsonlSink(destination) if destination is not None else None
-    selected_sinks: list[ResultSink] = [recorder] if recorder is not None else []
-    selected_sinks.extend(sinks)
+    explicit: list[ResultSink] = [recorder] if recorder is not None else []
+    explicit.extend(sinks)
+    # Declared sinks open once per instance, after explicit sinks, in evaluation order.
+    # An instance that is also explicit stays unscoped and receives every event.
+    declared: dict[int, tuple[ResultSink, list[str]]] = {}
+    explicit_ids = {id(sink) for sink in explicit}
+    for task in execution.tasks:
+        for sink in task.spec.sinks:
+            if id(sink) not in explicit_ids:
+                declared.setdefault(id(sink), (sink, []))[1].append(task.spec.name)
     names: set[str] = set()
-    for sink in selected_sinks:
+    for sink in [*explicit, *(sink for sink, _ in declared.values())]:
         name = nonempty("sink name", sink.name)
         if name in names:
             raise ConfigurationError(f"Duplicate sink name {name!r}")
@@ -167,7 +175,26 @@ async def arun(
             for task in group.tasks
         },
     )
+    source_ids = {
+        task.spec.name: reader.source_id
+        for reader, group in zip(readers, execution.groups, strict=True)
+        for task in group.tasks
+    }
+    selected_sinks = [Selected(sink) for sink in explicit] + [
+        Selected(sink, Scope(frozenset(tasks), frozenset(source_ids[name] for name in tasks)))
+        for sink, tasks in declared.values()
+    ]
     aggregate = Aggregator(metrics)
+    # Declared sinks finish with a summary of only their own evaluations.
+    scoped = {
+        selected.scope: Aggregator({name: metrics[name] for name in selected.scope.tasks})
+        for selected in selected_sinks
+        if selected.scope is not None
+    }
+    aggregators = {
+        name: [aggregate, *(agg for scope, agg in scoped.items() if name in scope.tasks)]
+        for name in metrics
+    }
     delivery = Delivery()
     pool = CallbackPool(capacity)
     jobs: asyncio.Queue[_Job | None] = asyncio.Queue(maxsize=capacity)
@@ -184,7 +211,9 @@ async def arun(
             return await drain(pending)
 
     async def publish(job: _Job, result: JsonObject) -> None:
-        aggregate.observe(job.task.spec.name, observation(result))
+        trial = observation(result)
+        for aggregator in aggregators[job.task.spec.name]:
+            aggregator.observe(job.task.spec.name, trial)
         await delivery.write(
             TrialFinished(
                 job.task.spec.name,
@@ -218,7 +247,8 @@ async def arun(
                         if admitted >= max_executions:
                             raise DatasetError(f"Run exceeds max_executions={max_executions}")
                         await jobs.put(_Job(task, reader.source_id, index, trial, case, normalized))
-                        aggregate.admit(task.spec.name)
+                        for aggregator in aggregators[task.spec.name]:
+                            aggregator.admit(task.spec.name)
                         admitted += 1
                 if delivery.failed:
                     break
@@ -338,7 +368,20 @@ async def arun(
         outcomes,
         tuple(failures),
     )
-    finishing = asyncio.create_task(delivery.finish(outcome))
+    scoped_outcomes = {
+        scope: replace(
+            outcome,
+            summary=aggregator.snapshot(),
+            sources={k: v for k, v in outcome.sources.items() if k in scope.sources},
+            requirements=tuple(
+                result
+                for requirement, result in zip(requirements, outcomes, strict=True)
+                if requirement.path[0] == "tasks" and requirement.path[1] in scope.tasks
+            ),
+        )
+        for scope, aggregator in scoped.items()
+    }
+    finishing = asyncio.create_task(delivery.finish(outcome, scoped_outcomes))
     try:
         receipts = await asyncio.shield(finishing)
     except asyncio.CancelledError as exc:

@@ -18,6 +18,7 @@ class DefinitionInfo:
     name: str
     selector: str
     definition: Definition
+    sinks: tuple[str, ...] = ()
 
 
 def _kind(value: object) -> str | None:
@@ -40,7 +41,9 @@ def list_definitions(module_name: str) -> list[DefinitionInfo]:
     for symbol, value in sorted(vars(module).items()):
         kind = _kind(value)
         if not symbol.startswith("_") and kind is not None:
-            result.append(DefinitionInfo(kind, value.name, f"{module_name}:{symbol}", value))
+            # Names only: listing never opens a declared sink.
+            sinks = tuple(sink.name for sink in value.sinks) if kind == "eval" else ()
+            result.append(DefinitionInfo(kind, value.name, f"{module_name}:{symbol}", value, sinks))
     return result
 
 
@@ -57,13 +60,13 @@ def resolve_definition(selector: str) -> Definition:
     raise ConfigurationError(f"No mic definition found at {selector!r}")
 
 
-def resolve_evaluations(selector: str) -> list[mic.EvaluationDefinition]:
+def resolve_evaluations(selector: str) -> list[mic.Evaluation[Any, Any, Any, Any]]:
     """Exact evaluation or module:*; deterministic symbol order, aliases once."""
     if selector.count(":") == 1 and selector.endswith(":*"):
         module_name = selector[:-2]
         if not module_name:
             raise ConfigurationError("Wildcard selection requires a module name")
-        selected: list[mic.EvaluationDefinition] = []
+        selected: list[mic.Evaluation[Any, Any, Any, Any]] = []
         seen: set[int] = set()
         for definition in list_definitions(module_name):
             if (

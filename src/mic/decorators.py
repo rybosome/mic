@@ -41,6 +41,8 @@ from .schema import schema as native_schema
 if TYPE_CHECKING:
     from typing_extensions import TypeForm
 
+    from .sinks.base import ResultSink
+
 
 class _Unset:
     pass
@@ -313,6 +315,7 @@ def eval[I, O, E, M](
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
+    sinks: Sequence[ResultSink] = (),
 ) -> _TaskDecorator[I, O, E, M]: ...
 
 
@@ -324,6 +327,7 @@ def eval[I, E, M](
     scorers: Sequence[Never],
     trials: int = 1,
     concurrency: int = 10,
+    sinks: Sequence[ResultSink] = (),
 ) -> _InferredTaskDecorator[I, E, M]: ...
 
 
@@ -335,6 +339,7 @@ def eval[I, O, E, M](
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
+    sinks: Sequence[ResultSink] = (),
 ) -> _TaskDecorator[I, O, E, M]: ...
 
 
@@ -346,6 +351,7 @@ def eval[I, O, E, M](
     scorers: Sequence[Scorer[I, O, E, M]],
     trials: int = 1,
     concurrency: int = 10,
+    sinks: Sequence[ResultSink] = (),
 ) -> _TaskDecorator[I, O, E, M] | _InferredTaskDecorator[I, E, M]:
     def decorate(fn: _InputTask[I, O] | Task[I, O, M]) -> Evaluation[I, O, E, M]:
         annotation = _inferred_output(fn) if isinstance(output, _Unset) else output
@@ -365,6 +371,7 @@ def eval[I, O, E, M](
             _contextual_task(fn),
             trials,
             concurrency,
+            tuple(sinks),
         )
 
     return decorate

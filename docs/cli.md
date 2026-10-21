@@ -28,7 +28,7 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 
 | Command | Accepts | Effect |
 | --- | --- | --- |
-| `list` | One or more modules | List definitions; no dataset reads or task calls. Optional `--json`. |
+| `list` | One or more modules | List definitions and each evaluation's declared sink names; no dataset reads, task calls, or sink opens. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
 | `run` | Evaluation selector or `module:*` | Stream trials/scorers; `--output` opts into evidence. Optional `--json` prints the final manifest. |
@@ -136,6 +136,24 @@ Braintrust extra, credentials, and your intended project. Optional
 `--braintrust-app-url` and `--braintrust-org` configure the destination; these
 options and `--braintrust-experiment` require `--braintrust-project`.
 See [reporting setup and sensitive evidence](reporting.md).
+
+### Declared sinks
+
+An evaluation declared with `@mic.eval(..., sinks=[...])` sends results to those
+sinks on every `mic run`, with no flags. `mic list` shows their names
+(`sinks=` in text, a `sinks` array per evaluation with `--json`) without opening
+them. Explicit flags such as `--braintrust-project` add to declared sinks; the
+recorder is first, explicit sinks next, then declared sinks. In a `module:*`
+suite each declared sink receives only the evaluations that declared it.
+
+```console
+mic run ticket_eval:classify --no-sinks
+```
+
+`--no-sinks` ignores every declared sink for that run, for example to
+run offline without publishing. It does not disable explicitly requested sinks:
+`--output` and `--braintrust-project` still apply, and Mic has no default sinks. See
+[declared sinks](reporting.md#declared-sinks).
 
 ## Exit codes and help
 
