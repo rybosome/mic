@@ -71,3 +71,8 @@ def no_task_reference(ctx: mic.TaskContext) -> object:
 
 
 mic.run([text_data])  # expect-error
+
+
+@mic.eval(dataset=text_data, scorers=[exact], sinks=[object()])  # expect-error
+def not_a_sink(value: str) -> str:
+    return value

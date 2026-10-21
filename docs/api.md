@@ -24,11 +24,13 @@ passes strict Pyright.
   function taking `ScoreContext[I,O,E,M]`. Each scorer defines exactly one metric,
   named by the scorer. Return a finite `float`/`int`, `None` when inapplicable, or
   `Score(value, metadata)` when the score needs JSON metadata.
-- `@eval(dataset=..., scorers=[...], trials=1, concurrency=10)`
+- `@eval(dataset=..., scorers=[...], trials=1, concurrency=10, sinks=())`
   accepts a task `(input: I) -> O | TaskResult[O]` or
   `(TaskContext[M], input: I) -> O | TaskResult[O]`, sync or async.
   `TaskResult` is the only metadata wrapper. Ordinary dictionaries containing
-  `output` and `metadata` keys are not unpacked.
+  `output` and `metadata` keys are not unpacked. `sinks=` declares result sinks
+  that every run of the evaluation uses; see
+  [declared sinks](#optional-results-and-evidence).
 - All three decorators accept optional `name=`. If omitted or `None`, it defaults
   to the function's `__name__`, not a module-qualified name. Use `@scorer()` with
   parentheses. Callables without a function name (such as `functools.partial`)
@@ -300,6 +302,21 @@ isolated with copied data. Cleanup occurs on success, failure, and cancellation.
 A failed sink is disabled; healthy sinks finalize. The outcome passed to
 `finish` describes computation, not the not-yet-known outcome of all sink cleanup.
 The final `RunResult` incorporates every sink receipt.
+
+An evaluation can declare its own sinks with `@mic.eval(..., sinks=[sink])`, so
+`mic run` and `run()`/`arun()` use them without extra arguments. A declared sink
+is constructed when its module is imported, so construction must stay passive.
+A run's sinks are the recorder, then explicit `sinks=`, then declared sinks in
+evaluation order. One sink instance declared by several selected evaluations opens
+once; an instance that is also passed explicitly opens once as an explicit sink.
+Different instances with the same name are a configuration error before any
+source is read. A declared sink sees only the evaluations that declared it:
+`RunInfo.tasks`, trial events, events from the sources those evaluations read,
+and a `finish` outcome whose summary, sources, and task requirements cover only
+those evaluations. The outcome's status, exit code, and failures remain
+run-wide. Declared sinks have the same failure semantics as explicit sinks. To run
+without them, pass `replace(evaluation, sinks=())` or use
+`mic run --no-declared-sinks`.
 
 See [sink lifecycle and Braintrust](reporting.md), [artifact schemas](artifacts.md),
 and [source authoring](providers.md#custom-sources).

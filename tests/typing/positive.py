@@ -1,8 +1,11 @@
 """Authoring patterns that must retain their full generic types under Pyright strict."""
 
+from contextlib import AbstractAsyncContextManager
 from typing import assert_type
 
 import mic
+from mic.results import RunInfo
+from mic.sinks import ResultSink, SinkSession
 
 
 @mic.dataset(name="text", schema=mic.case_schema(input=str, expected=str))
@@ -83,3 +86,21 @@ def numeric_output(value: str) -> int:
 def run_suite() -> mic.RunResult:
     evaluations: list[mic.EvaluationDefinition] = [sync_eval, numeric_output]
     return mic.run(evaluations)
+
+
+class Progress:
+    """A passive sink description; resources are acquired only in open()."""
+
+    name = "progress"
+
+    def open(self, run: RunInfo) -> AbstractAsyncContextManager[SinkSession]:
+        raise NotImplementedError
+
+
+@mic.eval(dataset=text_data, scorers=[exact], sinks=[Progress()])
+def declared_sink(value: str) -> str:
+    return value.upper()
+
+
+assert_type(declared_sink, mic.Evaluation[str, str, str, mic.JsonObject])
+assert_type(declared_sink.sinks, tuple[ResultSink, ...])

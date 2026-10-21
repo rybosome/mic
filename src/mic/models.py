@@ -19,6 +19,7 @@ _O = TypeVar("_O")
 if TYPE_CHECKING:
     from typing_extensions import TypeVar as DefaultTypeVar
 
+    from .sinks.base import ResultSink
     from .sources import ReadContext
 
     _E = DefaultTypeVar("_E", default=_O)
@@ -158,3 +159,5 @@ class Evaluation[I, O, E, M](EvaluationDefinition):
     function: Task[I, O, M] = field(repr=False)
     trials: int = 1
     concurrency: int = 10
+    # Sinks are caller-owned objects that need not be hashable or comparable.
+    sinks: tuple["ResultSink", ...] = field(default=(), compare=False)

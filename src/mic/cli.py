@@ -5,6 +5,7 @@ import json
 import sys
 import webbrowser
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import mic
@@ -57,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--braintrust-app-url")
     run.add_argument("--braintrust-org")
     run.add_argument("--output", type=Path)
+    run.add_argument(
+        "--no-declared-sinks",
+        action="store_true",
+        help="Ignore sinks declared with @mic.eval(sinks=...); explicit options still apply",
+    )
     run.add_argument("--timeout", type=float, help="Cooperative per-trial timeout in seconds")
     run.add_argument("--require", action="append", default=[], metavar="SUMMARY_PATH >= VALUE")
     run.add_argument("--on-invalid", choices=("abort", "skip"), default="abort")
@@ -103,11 +109,16 @@ def _execute(args: argparse.Namespace) -> int:
         rows = [definition for module in args.modules for definition in list_definitions(module)]
         if args.json:
             _print_json(
-                [{"kind": row.kind, "name": row.name, "selector": row.selector} for row in rows]
+                [
+                    {"kind": row.kind, "name": row.name, "selector": row.selector}
+                    | ({"sinks": list(row.sinks)} if row.kind == "eval" else {})
+                    for row in rows
+                ]
             )
         else:
             for row in rows:
-                print(f"{row.kind:8} {row.name:28} {row.selector}")
+                sinks = f"  sinks={','.join(row.sinks)}" if row.sinks else ""
+                print(f"{row.kind:8} {row.name:28} {row.selector}{sinks}")
         return 0
     if args.command == "report":
         destination = write_report(
@@ -136,8 +147,11 @@ def _execute(args: argparse.Namespace) -> int:
         )
         _print_json(result)
         return 0
+    selection = resolve_evaluations(args.selector)
+    if args.no_declared_sinks:
+        selection = [replace(spec, sinks=()) for spec in selection]
     run_result = mic.run(
-        resolve_evaluations(args.selector),
+        selection,
         output=args.output,
         trials=args.trials,
         concurrency=args.concurrency,

@@ -39,6 +39,9 @@ The distribution is `mic-evals`; the import and executable are `mic`.
   or imports inside a task will work.
 - Model calls and remote sinks are explicit effects. Use the user's existing
   authorization; ask only for missing scope before introducing additional effects.
+- An evaluation can declare sinks (`@mic.eval(sinks=...)`) that `mic run` uses
+  without flags. Check `mic list` for `sinks=` before running, and use
+  `mic run --no-declared-sinks` when publishing is not authorized.
 - Keep secrets out of commands, logs, fixtures, and artifacts. Evidence may contain
   sensitive inputs and outputs; generic exception messages are not general redaction.
 - A rerun repeats application calls and possible charges. Prefer existing evidence
