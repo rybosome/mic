@@ -182,3 +182,68 @@ def test_estimate_command_is_not_available() -> None:
     result = invoke("estimate", "examples.triage:triage_data")
     assert result.returncode == 2
     assert "invalid choice" in result.stderr
+
+
+def test_run_progress_goes_to_stderr_without_escapes_when_not_a_terminal() -> None:
+    process = invoke("run", "examples.failures:task_error")
+    assert process.returncode == 1, process.stderr
+    assert process.stdout.startswith("Run          ")
+    assert "mic run " in process.stderr
+    assert "trial 1 task_failed (RuntimeError)" in process.stderr
+    assert "\x1b" not in process.stderr
+    assert "Demonstration task error" not in process.stderr
+
+
+def test_quiet_run_prints_only_the_result() -> None:
+    process = invoke("run", "examples.triage:baseline", "-q")
+    assert process.returncode == 0, process.stderr
+    assert process.stderr == ""
+    assert process.stdout.startswith("Run          ")
+
+
+def test_quiet_and_verbose_are_mutually_exclusive() -> None:
+    assert invoke("run", "examples.triage:baseline", "-q", "-v").returncode == 2
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="pseudo-terminals are POSIX-only")
+def test_terminal_run_draws_a_status_line_and_leaves_it_cleared() -> None:
+    import os
+    import pty
+    import select
+
+    leader, follower = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-m", "mic.cli", "run", "examples.triage:baseline", "--json"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=follower,
+        env={**os.environ, "TERM": "xterm", "COLUMNS": "80"},
+    )
+    os.close(follower)
+    received = b""
+    while True:
+        ready, _, _ = select.select([leader], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(leader, 4096)
+            except OSError:  # EIO once the terminal's other side closes (Linux)
+                break
+            if not chunk:
+                break
+            received += chunk
+        elif process.poll() is not None:
+            break
+    stdout, _ = process.communicate(timeout=30)
+    os.close(leader)
+
+    assert process.returncode == 0
+    # stdout stays machine-readable while progress is drawn on the terminal.
+    assert json.loads(stdout)["status"] == "completed"
+    terminal = received.decode("utf-8").replace("\r\n", "\n")
+    erase = "\r\x1b[2K"
+    assert erase in terminal
+    assert "mic run " in terminal
+    assert terminal.count("  ✓  ") == 3
+    # After the final erase only complete lines remain: no status line is left drawn.
+    tail = terminal.rsplit(erase, 1)[1]
+    assert tail == "" or tail.endswith("\n")

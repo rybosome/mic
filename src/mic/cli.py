@@ -9,11 +9,14 @@ from dataclasses import replace
 from pathlib import Path
 
 import mic
+from mic._async import run_sync
 from mic._runtime.discovery import list_definitions, resolve_definition, resolve_evaluations
+from mic._runtime.engine import execute
 from mic.errors import ConfigurationError, DatasetError, MicError
 from mic.models import JsonObject
 from mic.reporters.console import format_summary
 from mic.reporters.html import write_report
+from mic.reporters.live import progress
 from mic.sinks.braintrust import BraintrustSink
 
 
@@ -67,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--require", action="append", default=[], metavar="SUMMARY_PATH >= VALUE")
     run.add_argument("--on-invalid", choices=("abort", "skip"), default="abort")
     run.add_argument("--json", action="store_true", help="Print the complete final run manifest")
+    verbosity = run.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "-q", "--quiet", action="store_true", help="Show no progress on stderr; only the result"
+    )
+    verbosity.add_argument(
+        "-v", "--verbose", action="store_true", help="Show every case with its score means"
+    )
     report = commands.add_parser(
         "report", help="Render existing artifacts without running an evaluation"
     )
@@ -150,18 +160,26 @@ def _execute(args: argparse.Namespace) -> int:
     selection = resolve_evaluations(args.selector)
     if args.no_sinks:
         selection = [replace(spec, sinks=()) for spec in selection]
-    run_result = mic.run(
-        selection,
-        output=args.output,
-        trials=args.trials,
-        concurrency=args.concurrency,
-        timeout=args.timeout,
-        require=args.require,
-        limits=_read_limits(args),
-        max_executions=args.max_executions,
-        sinks=_sinks(args),
-        on_invalid=args.on_invalid,
-    )
+    sinks = _sinks(args)
+    # Progress is closed before anything else prints, including interrupts and errors.
+    with progress(sys.stderr, quiet=args.quiet, verbose=args.verbose) as observer:
+        run_result = run_sync(
+            "mic.run()",
+            "mic.arun",
+            lambda: execute(
+                selection,
+                output=args.output,
+                trials=args.trials,
+                concurrency=args.concurrency,
+                timeout=args.timeout,
+                require=args.require,
+                limits=_read_limits(args),
+                max_executions=args.max_executions,
+                sinks=sinks,
+                on_invalid=args.on_invalid,
+                observer=observer,
+            ),
+        )
     if args.json:
         _print_json(run_result.to_json())
     else:

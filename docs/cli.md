@@ -31,7 +31,7 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 | `list` | One or more modules | List definitions and each evaluation's declared sink names; no dataset reads, task calls, or sink opens. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
-| `run` | Evaluation selector or `module:*` | Stream trials/scorers; `--output` opts into evidence. Optional `--json` prints the final manifest. |
+| `run` | Evaluation selector or `module:*` | Stream trials/scorers with [progress](#progress-output) on stderr; `--output` opts into evidence. Optional `--json` prints the final manifest; `-q`/`-v` adjust progress. |
 | `report` | Run directory or `run.json` | Render existing evidence as standalone HTML; no evaluation rerun. |
 
 Inspection, preflight, and runs read cloud datasets when selected. Each invocation
@@ -73,6 +73,47 @@ Timeouts are cooperative, not hard process-kill deadlines. Already-running
 synchronous calls cannot be forcibly stopped; Mic waits for in-flight work
 before resource cleanup. Set SDK/network timeouts too. See
 [execution and cancellation](api.md#execution-and-errors).
+
+## Progress output
+
+`mic run` reports progress on stderr while it streams; stdout carries only the
+final summary (or the `--json` manifest), so piping stdout is unaffected.
+
+```text
+mic run 126050df · necessity · 3 trials/case · concurrency 8 · timeout 30s
+  ✓✓✓    5.8s  row 2
+  ✓✗✓   30.4s  row 6 (refund-edge) · trial 2 task_failed (TimeoutError)
+  ✓✓!    7.1s  row 9 · trial 3 scoring_failed in recall (KeyError)
+⠼ 14 cases · 38 trials done · 4/8 running · 1 failed · 0.7/s · 0:52
+```
+
+- The header names the run, its evaluations, and execution options.
+- Each case prints one line when its last trial finishes, in completion order (row
+  numbers can appear out of order). Marks follow trial order: `✓` completed,
+  `✗` task failed, `!` scoring failed, `·` cancelled or never run. A rejected record
+  (with `--on-invalid skip`) prints `rejected` with its exception type. The time is the
+  slowest trial's total. Suites name each evaluation's marks, and runs that read more
+  than one source name the source.
+- Failures show the phase, scorer, and exception type only, like recorded evidence;
+  exception messages are never printed.
+- In a terminal, a status line is redrawn in place: cases (or records against
+  `--limit`), finished, running, and failed trials, throughput, elapsed time, and a
+  trial that has run unusually long. It also says when Mic is reading a source,
+  finishing sinks, or waiting for running trials after Ctrl-C. Already-running
+  synchronous task code cannot be interrupted, so cancellation waits for it to return.
+- When stderr is not a terminal (CI logs, redirects) or `TERM=dumb`, there is no
+  redrawn line or color: Mic prints the header, failed and rejected cases, and a status
+  line every 30 seconds and when a run starts cancelling or finishing.
+- `-v`/`--verbose` prints every case, including when stderr is not a terminal, with each
+  case's score means, for example `exact=0.75 recall=–` (`–`: no score recorded).
+- `-q`/`--quiet` prints no progress at all.
+
+Progress never changes a run's result, exit code, or evidence. Set `NO_COLOR` to
+disable color. Glyphs fall back to ASCII when stderr's encoding cannot represent them.
+While the status line is shown, Mic briefly wraps `sys.stdout` and `sys.stderr` so that
+application `print()` output appears whole above it; output without a trailing newline
+is held until the line completes. Logging handlers created before the run keep the
+original stream and may share a line with the status line until its next redraw.
 
 ## Quality gates
 

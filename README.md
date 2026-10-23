@@ -168,6 +168,10 @@ mic run ticket_eval:classify
 ```
 
 ```text
+mic run aab09342 · classify · 1 trial/case · concurrency 10
+  ✓    1.2s  row 0
+  ✓    0.9s  row 2
+  ✓    1.4s  row 1
 Run          aab09342b2884fd4a5b54b41c8b58e3c
 Status       completed
 Trials       3 completed / 3 admitted
@@ -176,7 +180,10 @@ classify.accuracy: mean=1.0 count=3
 Source       tickets: 3 accepted, 0 rejected
 ```
 
-In this example run, all three trials completed and each prediction matched its expected label.
+While the run streams, each case prints a line on stderr as its trials finish, and a
+status line at the bottom of the terminal shows counts, running trials, and elapsed time.
+The summary on stdout follows. In this example run, all three trials completed and each
+prediction matched its expected label. See [progress output](docs/cli.md#progress-output).
 
 Run again with saved evidence, then generate a report:
 
