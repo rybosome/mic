@@ -6,11 +6,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from .._async import drain, run_sync
 from ..errors import ConfigurationError, DatasetError
-from ..models import Evaluation, JsonObject, ReadLimits
+from ..models import Evaluation, JsonObject, JsonValue, ReadLimits
 from ..results import EvaluationOutcome, Failure, RunInfo, RunResult, SinkReceipt, failure, to_json
 from ..sinks.base import CaseAccepted, RecordRejected, ResultSink, SourceFinished, TrialFinished
 from .aggregation import Aggregator
@@ -22,9 +22,10 @@ from .delivery import Delivery, Scope, Selected
 from .files import atomic_write
 from .options import resolve_options
 from .planning import BoundTask, RunSelection, configuration, plan
+from .progress import Progress, RunObserver, RunPlan, SourcePlan, TaskPlan, TrialError
 from .recorder import JsonlSink
 from .requirements import parse_requirements
-from .validation import dumps, nonempty
+from .validation import dumps, json_object, nonempty
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,35 @@ async def arun(
     on_invalid: Literal["abort", "skip"] = "abort",
 ) -> RunResult:
     """Stream once; no files without output=. Cancellation drains then re-raises."""
+    return await execute(
+        spec,
+        output=output,
+        trials=trials,
+        concurrency=concurrency,
+        require=require,
+        sinks=sinks,
+        limits=limits,
+        max_executions=max_executions,
+        timeout=timeout,
+        on_invalid=on_invalid,
+    )
+
+
+async def execute(
+    spec: RunSelection,
+    *,
+    output: Path | str | None = None,
+    trials: int | None = None,
+    concurrency: int | None = None,
+    require: Sequence[str] = (),
+    sinks: Sequence[ResultSink] = (),
+    limits: ReadLimits | None = None,
+    max_executions: int = 50_000,
+    timeout: float | None = None,
+    on_invalid: Literal["abort", "skip"] = "abort",
+    observer: RunObserver | None = None,
+) -> RunResult:
+    """``arun`` with an internal progress observer; the observer cannot alter the result."""
     execution = plan(
         spec, trials=trials, concurrency=concurrency, timeout=timeout, max_executions=max_executions
     )
@@ -150,11 +180,12 @@ async def arun(
         raise ConfigurationError(f"Output directory must be empty: {destination}")
 
     run_id = uuid.uuid4().hex
+    read_limits = limits or ReadLimits()
     readers = [
         DatasetReader(
             group.dataset,
             f"{run_id}:s{index}",
-            limits or ReadLimits(),
+            read_limits,
             on_invalid=on_invalid,
             require_expected=any(
                 s.requires_expected for task in group.tasks for s in task.spec.scorers
@@ -180,6 +211,33 @@ async def arun(
         for reader, group in zip(readers, execution.groups, strict=True)
         for task in group.tasks
     }
+    progress = Progress(observer)
+    progress(
+        lambda o: o.planned(
+            RunPlan(
+                run_id,
+                tuple(
+                    TaskPlan(
+                        task.spec.name,
+                        tuple(metrics[task.spec.name]),
+                        task.options.trials,
+                        task.options.timeout,
+                    )
+                    for task in execution.tasks
+                ),
+                tuple(
+                    SourcePlan(
+                        reader.source_id,
+                        reader.dataset.name,
+                        tuple(task.spec.name for task in group.tasks),
+                    )
+                    for reader, group in zip(readers, execution.groups, strict=True)
+                ),
+                capacity,
+                read_limits,
+            )
+        )
+    )
     selected_sinks = [Selected(sink) for sink in explicit] + [
         Selected(sink, Scope(frozenset(tasks), frozenset(source_ids[name] for name in tasks)))
         for sink, tasks in declared.values()
@@ -202,18 +260,34 @@ async def arun(
     failures: list[Failure] = []
     admitted = 0
 
-    async def join[T](pending: asyncio.Future[T]) -> T:
+    def interrupt(exc: asyncio.CancelledError) -> None:
         nonlocal interrupted
+        if interrupted is None:
+            progress(lambda o: o.cancelling())
+        interrupted = exc
+
+    async def join[T](pending: asyncio.Future[T]) -> T:
         try:
             return await asyncio.shield(pending)
         except asyncio.CancelledError as exc:
-            interrupted = exc
+            interrupt(exc)
             return await drain(pending)
 
     async def publish(job: _Job, result: JsonObject) -> None:
         trial = observation(result)
         for aggregator in aggregators[job.task.spec.name]:
             aggregator.observe(job.task.spec.name, trial)
+        # Notify before the awaited write so a cancelled write cannot hide a counted trial.
+        progress(
+            lambda o: o.trial_finished(
+                job.task.spec.name,
+                job.source_id,
+                job.row_index,
+                job.trial,
+                trial,
+                tuple(_trial_error(error) for error in cast(list[JsonValue], result["errors"])),
+            )
+        )
         await delivery.write(
             TrialFinished(
                 job.task.spec.name,
@@ -229,6 +303,7 @@ async def arun(
         reader: DatasetReader[object, object, object], tasks: tuple[BoundTask, ...]
     ) -> None:
         nonlocal admitted
+        progress(lambda o: o.source_started(reader.source_id))
         iterator = reader.rows()
         try:
             async for item in iterator:
@@ -236,9 +311,16 @@ async def arun(
                     break
                 if len(item) == 2:
                     index, error = item
+                    progress(lambda o: o.record_rejected(reader.source_id, index, error))
                     await delivery.write(RecordRejected(reader.source_id, index, error))
                     continue
                 index, case, normalized = item
+                label = normalized.get("label")
+                progress(
+                    lambda o: o.case_accepted(
+                        reader.source_id, index, label if isinstance(label, str) else None
+                    )
+                )
                 await delivery.write(CaseAccepted(reader.source_id, index, case.id, normalized))
                 for task in tasks:
                     for trial in range(1, task.options.trials + 1):
@@ -261,7 +343,9 @@ async def arun(
                 await iterator.aclose()
             except Exception as exc:
                 reader.error = failure("source_close", exc)
-            await delivery.write(SourceFinished(reader.source_id, reader.summary()))
+            finished = reader.summary()
+            progress(lambda o: o.source_finished(reader.source_id, finished))
+            await delivery.write(SourceFinished(reader.source_id, finished))
 
     async def producer() -> None:
         cancelled = False
@@ -282,7 +366,13 @@ async def arun(
 
     async def worker() -> None:
         while (job := await jobs.get()) is not None:
+            started = job  # a stable binding keeps the narrowed type inside the closure
             try:
+                progress(
+                    lambda o: o.trial_started(
+                        started.task.spec.name, started.source_id, started.row_index, started.trial
+                    )
+                )
                 try:
                     result = await run_case(
                         job.task.spec,
@@ -309,7 +399,7 @@ async def arun(
             workers.extend(asyncio.create_task(worker()) for _ in range(capacity))
             await asyncio.gather(*workers)
     except asyncio.CancelledError as exc:
-        interrupted = exc
+        interrupt(exc)
     except Exception as exc:
         failures.append(failure("runtime", exc))
     finally:
@@ -381,11 +471,12 @@ async def arun(
         )
         for scope, aggregator in scoped.items()
     }
+    progress(lambda o: o.finishing(delivery.unfinished))
     finishing = asyncio.create_task(delivery.finish(outcome, scoped_outcomes))
     try:
         receipts = await asyncio.shield(finishing)
     except asyncio.CancelledError as exc:
-        interrupted = exc
+        interrupt(exc)
         finishing.cancel()
         receipts = await drain(finishing)
         outcome = replace(outcome, status="cancelled", exit_code=130)
@@ -415,6 +506,14 @@ async def arun(
         )
         raise interrupted
     return result
+
+
+def _trial_error(value: JsonValue) -> TrialError:
+    error = json_object(value)
+    scorer = error.get("scorer")
+    return TrialError(
+        str(error["phase"]), str(error["type"]), scorer if isinstance(scorer, str) else None
+    )
 
 
 def _publish_result(destination: Path, result: RunResult) -> RunResult:
