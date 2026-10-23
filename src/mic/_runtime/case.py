@@ -61,24 +61,43 @@ async def run_case[I, O, E, M](
     phase = "task"
     phase_started = started
     scorer_name: str | None = None
+    ctx: TaskContext[M] | None = None
+    # Set once the task returns: from then on the success path owns task metadata, so a
+    # later failure (including invalid task metadata itself) must not record it again.
+    returned = False
 
-    def record_error(exc: BaseException) -> None:
-        error = cast(JsonObject, to_json(failure(phase, exc)))
+    def record_error(exc: BaseException, error_phase: str | None = None) -> None:
+        error = cast(JsonObject, to_json(failure(error_phase or phase, exc)))
         if scorer_name is not None:
             error["scorer"] = scorer_name
         errors.append(error)
+
+    def salvage_task_metadata() -> None:
+        """Record a failed trial's task metadata without changing its status or first error."""
+        if ctx is None or returned or not ctx.task_metadata:
+            return
+        try:
+            result["task_metadata"] = json_object(ctx.task_metadata, "$.task_metadata")
+        except Exception as exc:
+            record_error(exc, "schema")  # appended after the original failure, never before
 
     try:
         async with asyncio.timeout(options.timeout):
             cloned = copy.deepcopy(row)
             ctx = TaskContext(cloned.id, trial, cloned.metadata)
             raw = await pool.invoke(spec.function, ctx, cloned.input)
+            returned = True
             phase = "schema"
             metadata = copy.deepcopy(row.metadata)
+            enriched: TaskResult[O] | None = None
+            output_raw: object = raw
             if isinstance(raw, TaskResult):
                 enriched = cast(TaskResult[O], raw)
                 output_raw = enriched.output
-                task_metadata = json_object(enriched.metadata, "$.task_metadata")
+            if enriched is not None or ctx.task_metadata:
+                # Snapshot the context's writes now; returned TaskResult keys win on conflict.
+                collected = {**ctx.task_metadata, **({} if enriched is None else enriched.metadata)}
+                task_metadata = json_object(collected, "$.task_metadata")
                 result["task_metadata"] = task_metadata
                 merged = (
                     {}
@@ -88,8 +107,6 @@ async def run_case[I, O, E, M](
                 merged.update(task_metadata)
                 metadata = validate(spec.dataset.schema.metadata, merged)
                 json_object(serialize(spec.dataset.schema.metadata, metadata), "$.metadata")
-            else:
-                output_raw = raw
             output = validate(spec.output, output_raw)
             result["output"] = serialize(spec.output, output)
             latencies["task_ms"] = (time.perf_counter() - started) * 1000
@@ -115,9 +132,11 @@ async def run_case[I, O, E, M](
     except asyncio.CancelledError as exc:
         result["status"] = "cancelled"
         record_error(exc)
+        salvage_task_metadata()
     except Exception as exc:
         result["status"] = "scoring_failed" if phase == "scorer" else "task_failed"
         record_error(exc)
+        salvage_task_metadata()
     finally:
         if latencies["task_ms"] is None:
             latencies["task_ms"] = (time.perf_counter() - started) * 1000

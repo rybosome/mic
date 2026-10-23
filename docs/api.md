@@ -106,6 +106,30 @@ metadata support. Input-only tasks receive no context or expected answer. Contex
 tasks can access case ID, trial, and metadata. `TaskContext` has no reference
 answer; expected values are available only to scorers.
 
+Context-aware tasks can also write `ctx.task_metadata`, a dictionary that is fresh for
+each trial. Mic records it as the trial's task metadata, shallow-merged under any
+returned `TaskResult` metadata, and records it for failed, timed-out and cancelled
+trials too. It must serialize to a JSON object. `ctx.metadata` is the case's metadata;
+changes to it are ignored.
+
+```python
+async def classify_with_context(ctx: mic.TaskContext, ticket: Ticket) -> Classification:
+    calls: list[mic.JsonValue] = []
+    try:
+        return await call_model(ticket, on_call=calls.append)
+    finally:
+        ctx.task_metadata["calls"] = calls  # recorded even if call_model raises
+```
+
+Mic takes one snapshot of `ctx.task_metadata` when the task returns, raises, times
+out or is cancelled; later writes, such as from a background task or a timed-out
+synchronous thread that is still running, are not recorded. The field cannot be
+reassigned, only mutated. When the task neither writes it nor returns a `TaskResult`,
+the trial has no `task_metadata`. On a successful trial, task metadata that does not
+serialize fails the trial in the `schema` phase, as an invalid `TaskResult` metadata
+does. On a trial that already failed, the original status and first error are kept,
+`task_metadata` is omitted, and a `schema` error is appended after the original one.
+
 Context type parameters have defaults:
 
 | Annotation | Equivalent full annotation |
@@ -130,9 +154,11 @@ the typed expected value or raises `MissingExpectedError`. `Missing` is encoded 
 an omitted field, while `None` is JSON null.
 
 Absent/null metadata becomes absent. Supplied metadata must validate and serialize
-to an object. Task metadata is shallow-merged onto the JSON projection of dataset
-metadata with task keys winning; the result is hydrated through the metadata type
-again. The artifact retains dataset metadata and task metadata separately.
+to an object. Task metadata is `ctx.task_metadata` with any returned `TaskResult`
+metadata shallow-merged over it. That is shallow-merged onto the JSON projection of
+dataset metadata with task keys winning, so precedence runs dataset metadata, then
+`ctx.task_metadata`, then `TaskResult` metadata. The result is hydrated through the
+metadata type again and is what scorers receive as `ScoreContext.metadata`. The artifact retains dataset metadata and task metadata separately.
 
 Case identity is generated from run ID, source occurrence, and zero-based row index.
 A supplied `RawCase.id` becomes a label, not a uniqueness constraint. Duplicate

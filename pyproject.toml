@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mic-evals"
-version = "0.3.0"
+version = "0.4.0"
 description = "Typed, provider-independent micro-evaluations for Python"
 readme = "README.md"
 requires-python = ">=3.12"

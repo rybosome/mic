@@ -61,6 +61,9 @@ async def async_input_only(value: str) -> mic.TaskResult[str]:
 def concise_context(ctx: mic.TaskContext, value: str) -> str:
     assert_type(ctx.trial, int)
     assert_type(ctx.metadata, mic.JsonObject | None)
+    assert_type(ctx.task_metadata, mic.JsonObject)
+    ctx.task_metadata["length"] = len(value)
+    ctx.task_metadata.update(calls=[{"model": "fixture"}])
     return value
 
 
