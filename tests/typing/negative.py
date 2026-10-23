@@ -70,6 +70,10 @@ def no_task_reference(ctx: mic.TaskContext) -> object:
     return ctx.expected  # expect-error
 
 
+def reassign_task_metadata(ctx: mic.TaskContext) -> None:
+    ctx.task_metadata = {}  # expect-error
+
+
 mic.run([text_data])  # expect-error
 
 

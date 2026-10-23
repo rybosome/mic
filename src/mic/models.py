@@ -72,11 +72,13 @@ class ReadLimits:
 
 @dataclass(frozen=True)
 class TaskContext(Generic[_M]):
-    """Execution coordinates and optional metadata; never the reference answer."""
+    """Execution coordinates, case metadata, and this trial's task metadata; never the reference answer."""
 
     case_id: str
     trial: int
-    metadata: _M | None
+    metadata: _M | None  # the case's dataset metadata; a per-trial copy whose changes mic ignores
+    # This trial's task metadata. Fresh and empty for every trial; mic records it as task_metadata.
+    task_metadata: JsonObject = field(default_factory=dict[str, JsonValue])
 
 
 @dataclass(frozen=True)

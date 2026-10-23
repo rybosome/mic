@@ -71,8 +71,9 @@ cap intervenes. SourceFinished can precede completion of its admitted trials.
 
 A trial result contains case_id, row_index, trial, status, input, scores, errors,
 and latency. Expected, metadata, label, provenance, output, and task_metadata
-appear only when present. Successful output validation is required before output
-is recorded. Missing output is distinct from a valid null output.
+appear only when present. task_metadata also appears on failed, timed-out, and
+cancelled trials when the task wrote `ctx.task_metadata` before it ended. Successful
+output validation is required before output is recorded. Missing output is distinct from a valid null output.
 
 Scores contain name, finite numeric or null value, and object metadata. Core scores
 are not restricted to [0,1]. Error records contain phase, exception type, and a

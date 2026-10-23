@@ -499,8 +499,9 @@ async def classify(ticket: Ticket) -> Classification:
 
 ### Request context when you need it
 
-For case/trial logging, replace the async task's signature with the following
-and add the logging call before its existing body. Keep its decorator unchanged:
+For case/trial logging, or to record per-trial evidence, replace the async task's
+signature with the following and add these lines before its existing body. Keep its
+decorator unchanged:
 
 <!-- snippet: task-context -->
 ```python
@@ -508,7 +509,11 @@ async def classify(ctx: mic.TaskContext, ticket: Ticket) -> Classification:
     import logging
 
     logging.getLogger(__name__).info("case=%s trial=%s", ctx.case_id, ctx.trial)
+    ctx.task_metadata["model"] = "jev-latest"
 ```
+
+Mic records `ctx.task_metadata` as the trial's `task_metadata`, even when the task
+later fails.
 
 See [context types](docs/api.md#callback-signatures-and-context-types).
 

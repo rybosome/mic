@@ -370,6 +370,14 @@ def test_async_task_and_context_examples(quickstart, with_context, missing_outpu
     }
     result = json.loads(Path("async/run.json").read_text())
     assert result["summary"]["trials"]["task_failed"] == (6 if missing_output else 0)
+    trials = [
+        json.loads(line)["result"]
+        for line in Path("async/events.jsonl").read_text().splitlines()
+        if json.loads(line)["type"] == "trial_finished"
+    ]
+    assert [trial.get("task_metadata") for trial in trials] == (
+        [{"model": "jev-latest"}] * 6 if with_context else [None] * 6
+    )
     if with_context:
         assert {record.getMessage() for record in caplog.records} == {
             f"case={case} trial={trial}"
