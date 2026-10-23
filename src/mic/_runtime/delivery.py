@@ -61,6 +61,11 @@ class Delivery:
     def failed(self) -> bool:
         return any(s.receipt is not None and s.receipt.status != "completed" for s in self._sinks)
 
+    @property
+    def unfinished(self) -> tuple[str, ...]:
+        """Names of open sinks that have not yet settled with a receipt."""
+        return tuple(s.name for s in self._sinks if s.session is not None and s.receipt is None)
+
     async def open(self, sinks: Sequence[Selected], run: RunInfo) -> None:
         for selected in sinks:
             sink, scope = selected.sink, selected.scope
