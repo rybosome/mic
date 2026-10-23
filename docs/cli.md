@@ -157,6 +157,13 @@ An explicit run output directory must be empty (or not yet exist). Omit
 `report` explicitly generates HTML without model calls.
 `report --output` chooses the HTML destination, not a new run directory.
 
+Without `--json`, `run` prints a human summary on stdout: status, elapsed wall-clock
+time, trial and failure counts, one aligned `Score` line per metric, requirement
+results, and source counts. Score means are rounded to three decimal places (very small
+or very large means use an exponent; `n/a` means no score was recorded). Requirement
+lines show the exact actual value, so a rounded mean never appears to contradict
+PASS/FAIL. `run.json` and `--json` keep exact values.
+
 `run --json` prints the complete final manifest instead of the human summary.
 Failed quality gates still produce a manifest and saved evidence. Check exit
 status as well as JSON; setup failures can exit before a manifest exists.

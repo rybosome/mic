@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+import time
 import webbrowser
 from collections.abc import Sequence
 from dataclasses import replace
@@ -161,6 +162,7 @@ def _execute(args: argparse.Namespace) -> int:
     if args.no_sinks:
         selection = [replace(spec, sinks=()) for spec in selection]
     sinks = _sinks(args)
+    started = time.monotonic()
     # Progress is closed before anything else prints, including interrupts and errors.
     with progress(sys.stderr, quiet=args.quiet, verbose=args.verbose) as observer:
         run_result = run_sync(
@@ -183,7 +185,7 @@ def _execute(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(run_result.to_json())
     else:
-        print(format_summary(run_result.to_json()))
+        print(format_summary(run_result.to_json(), elapsed=time.monotonic() - started))
         if run_result.output_dir is not None:
             print(f"Evidence     {run_result.output_dir}")
             if any(
