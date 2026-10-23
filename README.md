@@ -174,9 +174,10 @@ mic run aab09342 · classify · 1 trial/case · concurrency 10
   ✓    1.4s  row 1
 Run          aab09342b2884fd4a5b54b41c8b58e3c
 Status       completed
+Elapsed      3.6s
 Trials       3 completed / 3 admitted
 Failures     0 task, 0 scoring
-classify.accuracy: mean=1.0 count=3
+Score        classify.accuracy  mean 1.000  count 3
 Source       tickets: 3 accepted, 0 rejected
 ```
 

@@ -51,7 +51,7 @@ def test_console_separates_quality_and_execution() -> None:
     manifest, _ = sample()
     text = format_summary(manifest)
     assert "2 completed / 2 admitted" in text
-    assert "exact: mean=1.0 count=1" in text
+    assert "exact  mean 1.000  count 1" in text
     assert "0 task, 0 scoring" in text
 
 

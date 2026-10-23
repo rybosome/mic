@@ -58,7 +58,8 @@ def test_list_inspect_and_preflight() -> None:
 def test_baseline_fixed_gate_and_rerender(tmp_path: Path) -> None:
     baseline = invoke("run", "examples.triage:baseline", "--output", str(tmp_path / "baseline"))
     assert baseline.returncode == 0, baseline.stderr
-    assert "exact: mean=0.666" in baseline.stdout
+    assert "triage.baseline.exact  mean 0.667  count 3" in baseline.stdout
+    assert "Elapsed      " in baseline.stdout
     fixed = invoke("run", "examples.triage:fixed", "--output", str(tmp_path / "fixed"), "--json")
     assert fixed.returncode == 0, fixed.stderr
     before = json.loads((tmp_path / "baseline" / "run.json").read_text(encoding="utf-8"))
