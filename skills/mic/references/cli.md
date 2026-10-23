@@ -52,6 +52,8 @@ mic run ticket_eval:classify --limit 3 --trials 2 --concurrency 2 \
 | `--require EXPRESSION` | run | Repeatable quality requirements; all must pass |
 | `--output DIR` | run | No files by default; opt into local evidence in a new or empty directory |
 | `--json` | run | Print the complete final manifest instead of the human summary |
+| `-q`, `--quiet` | run | Print no progress on stderr; only the summary or manifest on stdout |
+| `-v`, `--verbose` | run | Print every case with its score means on stderr (exclusive with `-q`) |
 
 Counts must be positive integers; supplied timeouts must be finite and positive.
 In suites, concurrency is global (default: largest selected decorator value).
@@ -107,7 +109,9 @@ requirement, incorrect predictions can still produce exit code 0.
 | 130 | Interrupted |
 
 Check the process exit status as well as JSON. Setup failures can occur before a
-manifest exists. For automation, keep application logging on stderr; application
+manifest exists. `mic run` reports progress on stderr while it streams: a redrawn
+status line in a terminal, otherwise plain lines for the header, failed or rejected
+cases, and periodic status. Pass `-q` when stderr must stay empty. For automation, keep application logging on stderr; application
 prints to stdout can contaminate `--json`. Do not let a later report command's
 exit status replace the evaluation's exit status in a script.
 
