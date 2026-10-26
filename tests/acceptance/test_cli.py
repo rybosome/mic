@@ -219,8 +219,10 @@ def test_application_output_is_hidden_unless_shown(tmp_path: Path) -> None:
 
     shown = invoke("run", "examples.chatty:chatty", "--json", "--show-output")
     assert json.loads(shown.stdout)["status"] == "completed"
-    assert "  row 0 · trial 1 │ classifying 'It crashes on startup'" in shown.stderr
-    assert "  row 0 · trial 2 · exact │ expected 'bug', got 'question'" in shown.stderr
+    # Piped stderr may not encode Unicode (Windows), so progress falls back to ASCII glyphs.
+    stderr = shown.stderr.replace(" · ", " | ").replace(" │ ", " | ")
+    assert "  row 0 | trial 1 | classifying 'It crashes on startup'" in stderr
+    assert "  row 0 | trial 2 | exact | expected 'bug', got 'question'" in stderr
 
 
 def test_show_output_requires_progress() -> None:
