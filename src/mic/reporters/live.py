@@ -17,6 +17,7 @@ from dataclasses import astuple, dataclass, field
 from typing import TextIO
 
 from .._runtime.aggregation import Moments, TrialObservation
+from .._runtime.capture import Echo, Origin
 from .._runtime.progress import RunObserver, RunPlan, TrialError
 from ..results import Failure, SourceSummary
 
@@ -40,10 +41,11 @@ class Glyphs:
     ellipsis: str
     dash: str
     spinner: str
+    rule: str
 
 
-UNICODE = Glyphs("✓", "✗", "!", "·", "-", " · ", "…", "–", "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-ASCII = Glyphs("+", "x", "!", ".", "-", " | ", "...", "-", "|/-\\")
+UNICODE = Glyphs("✓", "✗", "!", "·", "-", " · ", "…", "–", "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", "│")
+ASCII = Glyphs("+", "x", "!", ".", "-", " | ", "...", "-", "|/-\\", "|")
 
 
 def glyphs_for(stream: TextIO) -> Glyphs:
@@ -246,6 +248,19 @@ class ProgressState(RunObserver):
         with self._lock:
             self._finishing = sinks
 
+    # Application output ----------------------------------------------------------
+
+    def output_lines(self, origin: Origin | None, text: str) -> list[str]:
+        """Prefix captured output with where it came from; it can never move the cursor."""
+        with self._lock:
+            prefix = self._origin(origin)
+        lines: list[str] = []
+        for line in text.removesuffix("\n").split("\n"):
+            # Keep what a terminal would show after a carriage return (progress bars).
+            shown = printable(line.rsplit("\r", 1)[-1].expandtabs())
+            lines.append(f"  {prefix} {self.glyphs.rule} {shown}")
+        return lines
+
     # Rendering -------------------------------------------------------------------
 
     def drain(self) -> list[str]:
@@ -367,6 +382,19 @@ class ProgressState(RunObserver):
             text += f" ({fit(printable(label), _LABEL_WIDTH, self.glyphs.ellipsis)})"
         return text
 
+    def _origin(self, origin: Origin | None) -> str:
+        source = None if origin is None else self._sources.get(origin.source_id)
+        if origin is None or source is None:
+            return "mic"
+        parts = [self._identity(origin.source_id, origin.row_index, None)]
+        if len(source.tasks) > 1:
+            parts.insert(0, printable(origin.evaluation))
+        if dict(source.tasks).get(origin.evaluation, 1) > 1:
+            parts.append(f"trial {origin.trial}")
+        if origin.scorer is not None:
+            parts.append(printable(origin.scorer))
+        return self.glyphs.separator.join(parts)
+
     def _paint(self, text: str, code: str) -> str:
         return f"\x1b[{code}m{text}\x1b[0m" if self._color else text
 
@@ -475,6 +503,24 @@ class _Display:
         while not self._stop.wait(self.interval):
             self._render()
 
+    def echo(self, origin: Origin | None, stream: str, text: str) -> None:
+        """Show captured application output above the progress, on the progress stream."""
+        lines = self.state.output_lines(origin, text)
+        with self._lock:
+            if self._broken:
+                return
+            try:
+                self.clear()
+                # Progress lines already due (the header, finished cases) keep their order.
+                lines = self.state.drain() + lines
+                self.stream.write("".join(line + "\n" for line in lines))
+                self.stream.flush()
+            except Exception:
+                self._broken = True
+
+    def clear(self) -> None:
+        """Remove anything that must not share a line with other output."""
+
     def _render(self, *, final: bool = False) -> None:
         if self._broken:
             return
@@ -518,6 +564,9 @@ class LiveDisplay(_Display):
                 setattr(sys, name, proxy.target)
             proxy.release()
         self._render(final=True)
+
+    def clear(self) -> None:
+        self.erase()
 
     def erase(self) -> None:
         """Remove the status line before other output; the next tick redraws it."""
@@ -643,10 +692,15 @@ def interactive(stream: TextIO) -> bool:
 
 
 @contextmanager
-def progress(stream: TextIO, *, quiet: bool, verbose: bool) -> Generator[RunObserver | None]:
-    """Show progress on ``stream`` for the duration of a run; always restores the terminal."""
+def progress(
+    stream: TextIO, *, quiet: bool, verbose: bool, show_output: bool = False
+) -> Generator[tuple[RunObserver | None, Echo | None]]:
+    """Show progress on ``stream`` for the duration of a run; always restores the terminal.
+
+    Yields the observer and, with ``show_output``, an echo for captured application output.
+    """
     if quiet:
-        yield None
+        yield None, None
         return
     live = interactive(stream)
     state = ProgressState(
@@ -658,6 +712,6 @@ def progress(stream: TextIO, *, quiet: bool, verbose: bool) -> Generator[RunObse
     display: _Display = LiveDisplay(state, stream) if live else PlainDisplay(state, stream)
     display.start()
     try:
-        yield state
+        yield state, display.echo if show_output else None
     finally:
         display.close()

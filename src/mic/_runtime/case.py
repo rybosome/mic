@@ -9,6 +9,7 @@ from ..models import Evaluation, JsonObject, JsonValue, ScoreContext, TaskContex
 from ..results import failure, to_json
 from .aggregation import TrialObservation, TrialStatus
 from .callbacks import CallbackPool
+from .capture import scoring
 from .contracts import Case
 from .options import Options
 from .validation import json_object, normalize_score, serialize, validate
@@ -124,7 +125,8 @@ async def run_case[I, O, E, M](
                             row.id,
                             trial,
                         )
-                        raw_score = await pool.invoke(scorer.function, context)
+                        with scoring(scorer.name):
+                            raw_score = await pool.invoke(scorer.function, context)
                         scores.append(normalize_score(raw_score, scorer.name))
                     except Exception as exc:
                         result["status"] = "scoring_failed"

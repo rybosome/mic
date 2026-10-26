@@ -78,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     verbosity.add_argument(
         "-v", "--verbose", action="store_true", help="Show every case with its score means"
     )
+    run.add_argument(
+        "--show-output",
+        action="store_true",
+        help="Show application stdout/stderr with the progress on stderr (hidden by default)",
+    )
     report = commands.add_parser(
         "report", help="Render existing artifacts without running an evaluation"
     )
@@ -164,7 +169,9 @@ def _execute(args: argparse.Namespace) -> int:
     sinks = _sinks(args)
     started = time.monotonic()
     # Progress is closed before anything else prints, including interrupts and errors.
-    with progress(sys.stderr, quiet=args.quiet, verbose=args.verbose) as observer:
+    with progress(
+        sys.stderr, quiet=args.quiet, verbose=args.verbose, show_output=args.show_output
+    ) as (observer, echo):
         run_result = run_sync(
             "mic.run()",
             "mic.arun",
@@ -179,7 +186,9 @@ def _execute(args: argparse.Namespace) -> int:
                 max_executions=args.max_executions,
                 sinks=sinks,
                 on_invalid=args.on_invalid,
+                capture_output=True,
                 observer=observer,
+                echo=echo,
             ),
         )
     if args.json:
@@ -190,14 +199,17 @@ def _execute(args: argparse.Namespace) -> int:
             print(f"Evidence     {run_result.output_dir}")
             if any(
                 s.status != "completed" for s in run_result.sinks if s.name in ("jsonl", "manifest")
-            ):
+            ) or any(f.phase == "output" for f in run_result.failures):
                 print("Warning      Recorded evidence may be incomplete or stale")
     return run_result.exit_code
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Exit 0: completed; 1: execution/gate/report; 2: configuration/data; 130: interrupt."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "run" and args.quiet and args.show_output:
+        parser.error("--show-output shows output with the progress, which --quiet hides")
     # The console entry point runs from bin/, so explicitly enable user-selected modules
     # in the invocation directory. Importing selected Python modules executes their code.
     current = str(Path.cwd())

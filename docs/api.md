@@ -321,6 +321,15 @@ cannot override execution or source failures. See [CLI gates](cli.md#quality-gat
 The directory must be empty or absent. `mic report .mic/run` renders recorded
 trials afterward with explicit size caps; HTML is never generated automatically.
 
+By default `run()` and `arun()` leave `sys.stdout` and `sys.stderr` alone.
+`capture_output=True` replaces both for the duration of the run, so application output
+is not written to them; with `output=` it is recorded to `output.jsonl`, attributed to
+the trial and scorer that wrote it ([format](artifacts.md#application-output),
+[limits](cli.md#application-output)). The original streams are restored on success,
+failure, and cancellation. Only one run in a process can capture at a time; another
+capturing run raises `ConfigurationError`, while a concurrent run that does not capture
+keeps its trials' output.
+
 Custom sinks implement `ResultSink.open(RunInfo)` as an async context manager
 yielding a `SinkSession` with `write(RunEvent)` and
 `finish(EvaluationOutcome) -> SinkReceipt`. Calls are serialized, awaited, and

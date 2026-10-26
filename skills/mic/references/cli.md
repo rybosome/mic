@@ -54,6 +54,7 @@ mic run ticket_eval:classify --limit 3 --trials 2 --concurrency 2 \
 | `--json` | run | Print the complete final manifest instead of the human summary |
 | `-q`, `--quiet` | run | Print no progress on stderr; only the summary or manifest on stdout |
 | `-v`, `--verbose` | run | Print every case with its score means on stderr (exclusive with `-q`) |
+| `--show-output` | run | Show captured application stdout/stderr on stderr, prefixed by row/trial/scorer (exclusive with `-q`) |
 
 Counts must be positive integers; supplied timeouts must be finite and positive.
 In suites, concurrency is global (default: largest selected decorator value).
@@ -111,8 +112,10 @@ requirement, incorrect predictions can still produce exit code 0.
 Check the process exit status as well as JSON. Setup failures can occur before a
 manifest exists. `mic run` reports progress on stderr while it streams: a redrawn
 status line in a terminal, otherwise plain lines for the header, failed or rejected
-cases, and periodic status. Pass `-q` when stderr must stay empty. For automation, keep application logging on stderr; application
-prints to stdout can contaminate `--json`. Do not let a later report command's
+cases, and periodic status. Pass `-q` when stderr must stay empty. Python-level
+application stdout/stderr is captured: hidden by default, recorded to `output.jsonl`
+with `--output`, and shown with `--show-output`, so it cannot contaminate `--json`.
+Writes to file descriptors (subprocesses, C extensions) are not captured. Do not let a later report command's
 exit status replace the evaluation's exit status in a script.
 
 ## Evidence and report controls
@@ -124,7 +127,7 @@ mic report .mic/gated
 mic report .mic/gated/run.json --output ticket-report.html --open
 ```
 
-`run --output` writes `run.json` and `events.jsonl` directly into the chosen
+`run --output` writes `run.json`, `events.jsonl`, and `output.jsonl` directly into the chosen
 directory; it does not create a run-ID subdirectory. `--json` alone does not save
 files and always runs the evaluation. Use a fresh output directory for a rerun;
 preserve earlier evidence rather than deleting it to reuse a name.

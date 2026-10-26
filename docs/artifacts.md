@@ -1,12 +1,13 @@
 # Streaming artifact contract
 
 Recording is opt-in: `mic run ... --output DIR` or `mic.run(..., output=DIR)`.
-No files are written by default. Recording writes two files:
+No files are written by default. Recording writes three files:
 
 | File | Format | Purpose |
 | --- | --- | --- |
 | `run.json` | [mic-run-v4](artifact-schemas/run-v4.schema.json) | Compact final summary, source outcomes, requirements, sink receipts |
 | `events.jsonl` | [mic-event-v1](artifact-schemas/event-v1.schema.json) | One independent, versioned event per line, in delivery order |
+| `output.jsonl` | [mic-output-v1](artifact-schemas/output-v1.schema.json) | Captured application stdout/stderr, when the run captures output |
 
 `mic report DIR` explicitly generates a standalone HTML view. It is not part of
 run finalization. There is no dataset snapshot, implicit case collection, backward
@@ -84,6 +85,26 @@ task_ms/scoring_ms/total_ms are nonnegative numbers or null.
 Trial events follow completion order, not source order. Consumers join on
 source/case/task/trial coordinates. The engine keeps no reorder buffer.
 
+## Application output
+
+`output.jsonl` exists when a recorded run also captures output: always for `mic run
+--output`, and for `run()`/`arun()` with `output=` and `capture_output=True`. It is
+empty when nothing was written. Each line has `schema_version="mic-output-v1"` and a
+`type`:
+
+- `output`: `stream` (`stdout` or `stderr`), `text`, and where it came from:
+  `evaluation`, `source_id`, `row_index`, `trial`, and `scorer` (null outside a scorer).
+  Run-level output has null for all five.
+- `truncated`: written once when recorded text reaches `limit_bytes` (64 MiB of UTF-8).
+  Later output is not recorded; it is still shown with `--show-output`.
+
+Lines are in capture order. `text` holds complete lines, except text flushed without a
+newline when its trial phase ended or 4 KiB accumulated; concatenating one origin's
+records for a stream reproduces what it wrote. A trial abandoned by a timeout or
+cancellation keeps its attribution if its code goes on writing. Output is not sent to
+sinks and is not part of `mic report` HTML. A failed write disables recording and adds an
+`output` run failure (exit code 1) without discarding results.
+
 ## Partial evidence and privacy
 
 Event writes flush incrementally; final run publication uses atomic replacement
@@ -99,5 +120,6 @@ Default report caps are 10,000 trial records and 64 MiB combined input files; th
 fail instead of silently producing a partial report.
 
 Inputs, expected values, outputs, metadata, scores, labels, SQL, parameters, and
-paths can all be sensitive. Generic error messages are not a general redaction
+paths can all be sensitive. `output.jsonl` holds application output verbatim, without
+redaction, including anything application code printed. Generic error messages are not a general redaction
 system. See [sharing guidance](reporting.md#sensitive-evidence-and-sharing).

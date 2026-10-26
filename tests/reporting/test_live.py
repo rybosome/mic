@@ -7,6 +7,7 @@ import pytest
 
 import mic
 from mic._runtime.aggregation import TrialObservation
+from mic._runtime.capture import Origin
 from mic._runtime.engine import execute
 from mic._runtime.progress import RunPlan, SourcePlan, TaskPlan, TrialError
 from mic.reporters.live import (
@@ -253,6 +254,35 @@ def test_live_display_keeps_application_output_off_the_status_line(monkeypatch) 
     assert output.endswith("partial line from a task\nunterminated\n")
 
 
+def test_shown_output_names_its_origin_and_cannot_move_the_cursor() -> None:
+    progress_state = state(glyphs=ASCII)
+    progress_state.planned(plan(("data", ("necessity", "sufficiency")), trials=2))
+    origin = Origin("run", "necessity", "s0", 4, 2)
+    lines = progress_state.output_lines(origin, "one\ttab\nloading 10%\rloading 100%\n")
+    assert lines == [
+        "  necessity | row 4 | trial 2 | one     tab",
+        "  necessity | row 4 | trial 2 | loading 100%",
+    ]
+    scorer = progress_state.output_lines(Origin("run", "necessity", "s0", 4, 1, "recall"), "x")
+    assert scorer == ["  necessity | row 4 | trial 1 | recall | x"]
+    assert progress_state.output_lines(None, "\x1b[31mred\n") == ["  mic | ?[31mred"]
+
+
+def test_live_display_shows_output_above_a_cleared_status_line() -> None:
+    terminal = Terminal()
+    progress_state = state()
+    progress_state.planned(plan(("data", ("necessity",))))
+    display = LiveDisplay(progress_state, terminal)
+    display.render(final=False)
+    display.echo(Origin("run", "necessity", "s0", 0, 1), "stdout", "hello\n")
+    erase = "\r\x1b[2K"
+    output = terminal.getvalue()
+    assert f"{erase}  row 0 │ hello\n" in output
+    display.render(final=True)
+    # Nothing is redrawn after the output, so nothing is left to erase.
+    assert terminal.getvalue().endswith(f"{erase}  row 0 │ hello\n")
+
+
 def test_a_broken_terminal_stops_progress_without_raising() -> None:
     class Broken(Terminal):
         def write(self, text: str) -> int:
@@ -280,9 +310,32 @@ def test_plain_display_prints_status_on_phase_changes_without_escapes() -> None:
 
 def test_quiet_progress_observes_nothing() -> None:
     stream = io.StringIO()
-    with progress(stream, quiet=True, verbose=False) as observer:
+    with progress(stream, quiet=True, verbose=False, show_output=True) as (observer, echo):
         assert observer is None
+        assert echo is None
     assert stream.getvalue() == ""
+
+
+async def test_shown_output_follows_the_header_in_plain_mode() -> None:
+    def task(_ctx, value):
+        print(f"task {value}")
+        return value
+
+    spec = mic.eval(
+        name="shown",
+        dataset=mic.dataset(name="shown", schema=mic.case_schema(input=int, expected=int))(
+            lambda: [mic.RawCase(input=1, expected=1)]
+        ),
+        output=int,
+        scorers=[],
+    )(task)
+    stream = Captured()
+    with progress(stream, quiet=False, verbose=False, show_output=True) as (observer, echo):
+        result = await execute(spec, observer=observer, capture_output=True, echo=echo)
+    assert result.exit_code == 0
+    lines = stream.getvalue().splitlines()
+    assert lines[0].startswith("mic run ")
+    assert lines[1] == "  row 0 │ task 1"
 
 
 async def test_a_real_run_reports_every_case_in_verbose_plain_mode() -> None:
@@ -299,7 +352,7 @@ async def test_a_real_run_reports_every_case_in_verbose_plain_mode() -> None:
         return value % 2
 
     stream = Captured()
-    with progress(stream, quiet=False, verbose=True) as observer:
+    with progress(stream, quiet=False, verbose=True) as (observer, _):
         result = await execute(parity, observer=observer)
 
     assert result.exit_code == 0
@@ -326,7 +379,7 @@ async def test_progress_state_failures_never_reach_the_run(hook, monkeypatch) ->
         output=int,
         scorers=[],
     )(lambda _ctx, value: value)
-    with progress(stream, quiet=False, verbose=False) as observer:
+    with progress(stream, quiet=False, verbose=False) as (observer, _):
         result = await execute(spec, observer=observer)
     assert result.exit_code == 0
     assert result.summary.trials.completed == 1

@@ -10,11 +10,12 @@ successful execution, or successful recording.
 chosen-output/
 ├── run.json      # Final manifest: summary, sources, requirements, sinks, configuration
 ├── events.jsonl  # Cases, rejected records, source outcomes, and individual trials
+├── output.jsonl  # Application stdout/stderr captured during the run, by trial
 └── report.html   # Optional; generated afterward by mic report
 ```
 
-Read the current `schema_version`: these references cover `mic-run-v4` and
-`mic-event-v1`. An initial `status: running` marker is not a completed result.
+Read the current `schema_version`: these references cover `mic-run-v4`,
+`mic-event-v1`, and `mic-output-v1`. An initial `status: running` marker is not a completed result.
 Use documentation matching the artifact version; do not reinterpret an unknown
 version as the current schema. No files are saved unless recording was enabled.
 
@@ -67,6 +68,10 @@ Stream `events.jsonl` line by line for larger runs. Event types are
 Each trial event carries `task`, `case_id`, `source_id`, `row_index`, `trial`, and
 its `result` (input, optional expected/output, scores, errors, status, latency).
 
+- To see what a failing trial printed, filter `output.jsonl` (`mic-output-v1`) on
+  the same `source_id`, `row_index`, and `trial` (and `evaluation`, which matches the
+  event's `task`). Null coordinates mean run-level output; a `truncated` line means
+  later output was not recorded.
 - Events follow completion/delivery order, not dataset order. Join on source/case,
   task, and trial coordinates; don't zip lines to dataset rows. Trial numbers are
   one-based and row indices are zero-based. Case IDs are run-specific.
