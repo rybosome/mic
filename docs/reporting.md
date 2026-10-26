@@ -130,7 +130,8 @@ keeps known summary/receipt information, not an in-memory backup of all events.
 ## Sensitive evidence and sharing
 
 Recording/export sends full values: inputs, expected answers, outputs, case/task/
-score metadata, labels, provenance, and generic error classifications. Provenance
+score metadata, labels, provenance, and generic error classifications. Local recording
+of captured output (`output.jsonl`) contains whatever application code printed. Provenance
 can include filesystem paths, SQL, parameters, dataset IDs, and query/job IDs.
 No credentials, raw exception messages, response bodies, or tracebacks are
 intentionally captured, but secrets deliberately placed in data or metadata are

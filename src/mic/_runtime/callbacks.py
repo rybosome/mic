@@ -1,6 +1,7 @@
 """Bounded dispatch of synchronous and asynchronous callbacks."""
 
 import asyncio
+import contextvars
 import inspect
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +24,9 @@ class CallbackPool:
         if inspect.iscoroutinefunction(fn):
             return await cast(Awaitable[T], fn(*args, **kwargs))
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(self.executor, partial(fn, *args, **kwargs))
+        # Unlike asyncio.to_thread, run_in_executor does not carry context variables.
+        context = contextvars.copy_context()
+        future = loop.run_in_executor(self.executor, context.run, partial(fn, *args, **kwargs))
         try:
             result = await asyncio.shield(future)
         except asyncio.CancelledError:

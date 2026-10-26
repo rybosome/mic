@@ -47,7 +47,8 @@ The distribution is `mic-evals`; the import and executable are `mic`.
 - A rerun repeats application calls and possible charges. Prefer existing evidence
   when the question can be answered without another run.
 
-These references describe Mic 0.5's CLI and `mic-run-v4` / `mic-event-v1` evidence.
+These references describe Mic 0.6's CLI and `mic-run-v4` / `mic-event-v1` /
+`mic-output-v1` evidence.
 Check the installed package version and command help when behavior differs.
 For further contracts, use the project's
 [documentation](https://github.com/rybosome/mic/tree/main/docs), matching its revision

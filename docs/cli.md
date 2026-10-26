@@ -31,7 +31,7 @@ Mic's discovery does not invoke dataset factories or initialize provider clients
 | `list` | One or more modules | List definitions and each evaluation's declared sink names; no dataset reads, task calls, or sink opens. Optional `--json`. |
 | `inspect` | Dataset or evaluation selector | Read, validate, and print dataset information as JSON. `--limit N` explicitly selects a prefix. |
 | `preflight` | Evaluation selector | Read the full dataset and validate execution configuration without calling tasks or scorers. Prints JSON. |
-| `run` | Evaluation selector or `module:*` | Stream trials/scorers with [progress](#progress-output) on stderr; `--output` opts into evidence. Optional `--json` prints the final manifest; `-q`/`-v` adjust progress. |
+| `run` | Evaluation selector or `module:*` | Stream trials/scorers with [progress](#progress-output) on stderr; `--output` opts into evidence. Optional `--json` prints the final manifest; `-q`/`-v` adjust progress; `--show-output` shows [application output](#application-output). |
 | `report` | Run directory or `run.json` | Render existing evidence as standalone HTML; no evaluation rerun. |
 
 Inspection, preflight, and runs read cloud datasets when selected. Each invocation
@@ -110,10 +110,40 @@ mic run 126050df · necessity · 3 trials/case · concurrency 8 · timeout 30s
 
 Progress never changes a run's result, exit code, or evidence. Set `NO_COLOR` to
 disable color. Glyphs fall back to ASCII when stderr's encoding cannot represent them.
-While the status line is shown, Mic briefly wraps `sys.stdout` and `sys.stderr` so that
-application `print()` output appears whole above it; output without a trailing newline
-is held until the line completes. Logging handlers created before the run keep the
-original stream and may share a line with the status line until its next redraw.
+
+### Application output
+
+`mic run` captures what tasks, scorers, sources, and sinks write to `sys.stdout` and
+`sys.stderr` while the run executes, so it cannot disturb progress or the summary:
+
+- By default it is not shown.
+- With `--output DIR`, it is recorded to `DIR/output.jsonl`
+  ([format](artifacts.md#application-output)), attributed to the trial that wrote it.
+- `--show-output` shows it on stderr above the status line, each line prefixed with
+  where it came from. stdout still carries only the summary or `--json` manifest.
+  `--show-output` cannot be combined with `-q`.
+
+```text
+mic run 126050df · necessity · 3 trials/case · concurrency 8
+  row 2 · trial 1 │ calling model for 'refund request'
+  row 2 · trial 1 · recall │ 3 of 4 facts matched
+  mic │ connection pool started
+  ✓✓✓    5.8s  row 2
+```
+
+The prefix names the row (and source, with several), the evaluation when a source feeds
+several, the trial when there are several, and the scorer. `mic` marks run-level output:
+sources, sinks, and threads that application code started itself. Shown lines keep only
+the text after a carriage return, and control characters are replaced with `?`, so output
+cannot move the cursor or emit escape codes. Text without a trailing newline is held until
+its line completes (or 4 KiB accumulate), and is flushed when its trial phase ends.
+
+Capture sees Python-level writes only. Writes straight to file descriptors 1 and 2 (C
+extensions, subprocesses) and logging handlers created before the run, which keep the
+original stream, are not captured and appear as they would without Mic. While a run
+captures, `sys.stdout.isatty()` is false and `fileno()` raises `io.UnsupportedOperation`.
+Attribution follows `contextvars`: async code, child tasks, and `asyncio.to_thread`
+inherit the trial; a bare `threading.Thread` does not and counts as run-level.
 
 ## Quality gates
 
@@ -153,7 +183,8 @@ mic report .mic/tickets-v2/run.json --output ticket-report.html
 ```
 
 An explicit run output directory must be empty (or not yet exist). Omit
-`--output` to write no files. With it, runs record `events.jsonl` and `run.json`;
+`--output` to write no files. With it, runs record `events.jsonl`, `output.jsonl`,
+and `run.json`;
 `report` explicitly generates HTML without model calls.
 `report --output` chooses the HTML destination, not a new run directory.
 
@@ -167,8 +198,8 @@ PASS/FAIL. `run.json` and `--json` keep exact values.
 `run --json` prints the complete final manifest instead of the human summary.
 Failed quality gates still produce a manifest and saved evidence. Check exit
 status as well as JSON; setup failures can exit before a manifest exists.
-Application code that prints to stdout can interfere with machine consumption,
-so keep such logging on stderr. See [artifact formats](artifacts.md).
+Application output is captured during the run, so it does not mix with the manifest.
+See [artifact formats](artifacts.md).
 
 ### Optional Braintrust export
 

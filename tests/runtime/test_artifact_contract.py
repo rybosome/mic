@@ -15,7 +15,7 @@ from .test_finalization import fail_replacement
 
 
 def test_schema_documents_are_valid_and_offline():
-    assert set(validators()) == {"common-v4", "run-v4", "event-v1"}
+    assert set(validators()) == {"common-v4", "run-v4", "event-v1", "output-v1"}
     with pytest.raises(Unresolvable):
         validators()["run-v4"].evolve(schema={"$ref": "https://invalid.example/absent"}).validate(
             {}

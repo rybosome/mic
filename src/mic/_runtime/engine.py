@@ -15,6 +15,7 @@ from ..results import EvaluationOutcome, Failure, RunInfo, RunResult, SinkReceip
 from ..sinks.base import CaseAccepted, RecordRejected, ResultSink, SourceFinished, TrialFinished
 from .aggregation import Aggregator
 from .callbacks import CallbackPool
+from .capture import OUTPUT_FILE, Echo, Origin, OutputCapture, attributed
 from .case import cancelled_case, observation, run_case
 from .contracts import Case
 from .datasets import DatasetReader
@@ -115,6 +116,7 @@ async def arun(
     max_executions: int = 50_000,
     timeout: float | None = None,
     on_invalid: Literal["abort", "skip"] = "abort",
+    capture_output: bool = False,
 ) -> RunResult:
     """Stream once; no files without output=. Cancellation drains then re-raises."""
     return await execute(
@@ -128,6 +130,7 @@ async def arun(
         max_executions=max_executions,
         timeout=timeout,
         on_invalid=on_invalid,
+        capture_output=capture_output,
     )
 
 
@@ -143,9 +146,66 @@ async def execute(
     max_executions: int = 50_000,
     timeout: float | None = None,
     on_invalid: Literal["abort", "skip"] = "abort",
+    capture_output: bool = False,
     observer: RunObserver | None = None,
+    echo: Echo | None = None,
 ) -> RunResult:
-    """``arun`` with an internal progress observer; the observer cannot alter the result."""
+    """``arun`` with an internal progress observer and output echo; neither alters the result."""
+    run_id = uuid.uuid4().hex
+    if not capture_output:
+        return await _execute(
+            spec,
+            run_id,
+            None,
+            output=output,
+            trials=trials,
+            concurrency=concurrency,
+            require=require,
+            sinks=sinks,
+            limits=limits,
+            max_executions=max_executions,
+            timeout=timeout,
+            on_invalid=on_invalid,
+            observer=observer,
+        )
+    capture = OutputCapture(run_id, record=output is not None, echo=echo)
+    capture.install()
+    try:
+        return await _execute(
+            spec,
+            run_id,
+            capture,
+            output=output,
+            trials=trials,
+            concurrency=concurrency,
+            require=require,
+            sinks=sinks,
+            limits=limits,
+            max_executions=max_executions,
+            timeout=timeout,
+            on_invalid=on_invalid,
+            observer=observer,
+        )
+    finally:
+        capture.close()
+
+
+async def _execute(
+    spec: RunSelection,
+    run_id: str,
+    capture: OutputCapture | None,
+    *,
+    output: Path | str | None,
+    trials: int | None,
+    concurrency: int | None,
+    require: Sequence[str],
+    sinks: Sequence[ResultSink],
+    limits: ReadLimits | None,
+    max_executions: int,
+    timeout: float | None,
+    on_invalid: Literal["abort", "skip"],
+    observer: RunObserver | None,
+) -> RunResult:
     execution = plan(
         spec, trials=trials, concurrency=concurrency, timeout=timeout, max_executions=max_executions
     )
@@ -179,7 +239,6 @@ async def execute(
     ):
         raise ConfigurationError(f"Output directory must be empty: {destination}")
 
-    run_id = uuid.uuid4().hex
     read_limits = limits or ReadLimits()
     readers = [
         DatasetReader(
@@ -373,16 +432,18 @@ async def execute(
                         started.task.spec.name, started.source_id, started.row_index, started.trial
                     )
                 )
+                origin = Origin(run_id, job.task.spec.name, job.source_id, job.row_index, job.trial)
                 try:
-                    result = await run_case(
-                        job.task.spec,
-                        job.case,
-                        job.encoded,
-                        job.row_index,
-                        job.trial,
-                        job.task.options,
-                        pool,
-                    )
+                    with attributed(origin):
+                        result = await run_case(
+                            job.task.spec,
+                            job.case,
+                            job.encoded,
+                            job.row_index,
+                            job.trial,
+                            job.task.options,
+                            pool,
+                        )
                 except asyncio.CancelledError:
                     result = cancelled_case(job.case.id, job.row_index, job.trial, job.encoded)
                 await publish(job, result)
@@ -394,6 +455,9 @@ async def execute(
     workers: list[asyncio.Task[None]] = []
     try:
         await delivery.open(selected_sinks, info)
+        if capture is not None and destination is not None and recorder is not None:
+            if recorder.acquired:
+                capture.record_to(destination / OUTPUT_FILE)
         if not delivery.failed:
             workers = [asyncio.create_task(producer())]
             workers.extend(asyncio.create_task(worker()) for _ in range(capacity))
@@ -497,6 +561,16 @@ async def execute(
         destination,
         info,
     )
+    if capture is not None:
+        # Finish the output record before run.json marks the run as final.
+        capture.close()
+        if capture.error is not None:
+            result = replace(
+                result,
+                status="cancelled" if result.exit_code == 130 else "failed",
+                exit_code=result.exit_code or 1,
+                failures=(*result.failures, capture.error),
+            )
     # Publish only into an acquired recorder directory, after every sink settled.
     if destination is not None and recorder is not None and recorder.acquired:
         result = _publish_result(destination, result)
@@ -544,6 +618,7 @@ def run(
     max_executions: int = 50_000,
     timeout: float | None = None,
     on_invalid: Literal["abort", "skip"] = "abort",
+    capture_output: bool = False,
 ) -> RunResult:
     return run_sync(
         "mic.run()",
@@ -559,5 +634,6 @@ def run(
             max_executions=max_executions,
             timeout=timeout,
             on_invalid=on_invalid,
+            capture_output=capture_output,
         ),
     )

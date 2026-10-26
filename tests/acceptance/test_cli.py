@@ -202,6 +202,33 @@ def test_quiet_run_prints_only_the_result() -> None:
     assert process.stdout.startswith("Run          ")
 
 
+def test_application_output_is_hidden_unless_shown(tmp_path: Path) -> None:
+    hidden = invoke("run", "examples.chatty:chatty", "--json", "--output", str(tmp_path / "run"))
+    assert hidden.returncode == 0, hidden.stderr
+    # stdout stays the manifest alone, and nothing the task printed reaches stderr.
+    assert json.loads(hidden.stdout)["status"] == "completed"
+    assert "classifying" not in hidden.stderr
+    assert "chose" not in hidden.stderr
+    lines = [json.loads(line) for line in (tmp_path / "run" / "output.jsonl").open()]
+    assert {(line["stream"], line["scorer"]) for line in lines} == {
+        ("stdout", None),
+        ("stderr", None),
+        ("stdout", "exact"),
+    }
+    assert len(lines) == 18  # three rows, two trials, three lines each
+
+    shown = invoke("run", "examples.chatty:chatty", "--json", "--show-output")
+    assert json.loads(shown.stdout)["status"] == "completed"
+    assert "  row 0 · trial 1 │ classifying 'It crashes on startup'" in shown.stderr
+    assert "  row 0 · trial 2 · exact │ expected 'bug', got 'question'" in shown.stderr
+
+
+def test_show_output_requires_progress() -> None:
+    process = invoke("run", "examples.chatty:chatty", "-q", "--show-output")
+    assert process.returncode == 2
+    assert "--show-output" in process.stderr
+
+
 def test_quiet_and_verbose_are_mutually_exclusive() -> None:
     assert invoke("run", "examples.triage:baseline", "-q", "-v").returncode == 2
 
